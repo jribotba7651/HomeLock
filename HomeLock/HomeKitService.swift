@@ -92,37 +92,144 @@ class HomeKitService: NSObject, ObservableObject {
     ///   - lockedState: El estado al que debe mantenerse (true = on, false = off)
     /// - Returns: El UUID del trigger creado
     func createLockTrigger(for accessory: HMAccessory, lockedState: Bool) async throws -> UUID {
+        print("🔒 [HomeLock] ========== CREANDO LOCK TRIGGER ==========")
+        print("🔒 [HomeLock] Dispositivo: \(accessory.name)")
+        print("🔒 [HomeLock] Estado a mantener: \(lockedState ? "ON" : "OFF")")
+
         guard let home = getHome(for: accessory) else {
+            print("❌ [HomeLock] ERROR: No se encontró el home para el accesorio")
             throw HomeKitError.homeNotFound
         }
+        print("🔒 [HomeLock] Home encontrado: \(home.name)")
 
-        guard let service = getControllableService(for: accessory),
-              let powerState = getPowerStateCharacteristic(for: service) else {
+        guard let service = getControllableService(for: accessory) else {
+            print("❌ [HomeLock] ERROR: No se encontró servicio controlable")
             throw HomeKitError.serviceNotFound
         }
+        print("🔒 [HomeLock] Servicio: \(service.serviceType) - \(service.name)")
+
+        guard let powerState = getPowerStateCharacteristic(for: service) else {
+            print("❌ [HomeLock] ERROR: No se encontró PowerState characteristic")
+            throw HomeKitError.serviceNotFound
+        }
+        print("🔒 [HomeLock] PowerState characteristic encontrado: \(powerState.characteristicType)")
+        print("🔒 [HomeLock] Valor actual: \(String(describing: powerState.value))")
 
         let triggerName = "HomeLock_\(accessory.uniqueIdentifier.uuidString)"
+        print("🔒 [HomeLock] Nombre del trigger: \(triggerName)")
 
         // Eliminar trigger existente si hay uno
+        print("🔒 [HomeLock] Triggers existentes en home: \(home.triggers.count)")
+        for existingTrigger in home.triggers {
+            print("   - \(existingTrigger.name): enabled=\(existingTrigger.isEnabled)")
+        }
+
         if let existingTrigger = home.triggers.first(where: { $0.name == triggerName }) {
-            try await home.removeTrigger(existingTrigger)
+            print("🔒 [HomeLock] Eliminando trigger existente...")
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                home.removeTrigger(existingTrigger) { error in
+                    if let error {
+                        print("❌ [HomeLock] Error eliminando trigger existente: \(error)")
+                        continuation.resume(throwing: error)
+                    } else {
+                        print("✅ [HomeLock] Trigger existente eliminado")
+                        continuation.resume()
+                    }
+                }
+            }
         }
 
         // Crear el evento: cuando PowerState cambia al estado opuesto al bloqueado
         let unwantedState = !lockedState
+        print("🔒 [HomeLock] Estado NO deseado (trigger value): \(unwantedState)")
+
         let event = HMCharacteristicEvent(characteristic: powerState, triggerValue: unwantedState as NSCopying)
+        print("🔒 [HomeLock] Evento creado: HMCharacteristicEvent")
+        print("   - Characteristic: \(event.characteristic.characteristicType)")
+        print("   - Trigger value: \(String(describing: event.triggerValue))")
 
         // Crear la acción: revertir al estado bloqueado
+        print("🔒 [HomeLock] Creando ActionSet...")
         let actionSet = try await createRevertActionSet(home: home, characteristic: powerState, targetState: lockedState, accessoryName: accessory.name)
+        print("✅ [HomeLock] ActionSet creado: \(actionSet.name)")
+        print("   - Actions: \(actionSet.actions.count)")
+        for action in actionSet.actions {
+            if let writeAction = action as? HMCharacteristicWriteAction<NSCopying> {
+                print("   - WriteAction: target=\(String(describing: writeAction.targetValue))")
+            }
+        }
 
         // Crear el trigger con el evento y la acción
+        print("🔒 [HomeLock] Creando HMEventTrigger...")
         let trigger = HMEventTrigger(name: triggerName, events: [event], predicate: nil)
 
-        try await home.addTrigger(trigger)
-        try await trigger.addActionSet(actionSet)
-        try await trigger.enable(true)
+        // Agregar trigger al home
+        print("🔒 [HomeLock] Agregando trigger al home...")
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            home.addTrigger(trigger) { error in
+                if let error {
+                    print("❌ [HomeLock] Error agregando trigger: \(error)")
+                    continuation.resume(throwing: error)
+                } else {
+                    print("✅ [HomeLock] Trigger agregado al home")
+                    continuation.resume()
+                }
+            }
+        }
 
-        print("HomeLock: Trigger creado para \(accessory.name), mantener \(lockedState ? "ON" : "OFF")")
+        // Agregar action set al trigger
+        print("🔒 [HomeLock] Agregando ActionSet al trigger...")
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            trigger.addActionSet(actionSet) { error in
+                if let error {
+                    print("❌ [HomeLock] Error agregando ActionSet: \(error)")
+                    continuation.resume(throwing: error)
+                } else {
+                    print("✅ [HomeLock] ActionSet agregado al trigger")
+                    continuation.resume()
+                }
+            }
+        }
+
+        // Habilitar el trigger
+        print("🔒 [HomeLock] Habilitando trigger...")
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            trigger.enable(true) { error in
+                if let error {
+                    print("❌ [HomeLock] Error habilitando trigger: \(error)")
+                    continuation.resume(throwing: error)
+                } else {
+                    print("✅ [HomeLock] Trigger habilitado")
+                    continuation.resume()
+                }
+            }
+        }
+
+        // Verificación final
+        print("🔒 [HomeLock] ========== VERIFICACIÓN FINAL ==========")
+        print("🔒 [HomeLock] Trigger UUID: \(trigger.uniqueIdentifier)")
+        print("🔒 [HomeLock] Trigger enabled: \(trigger.isEnabled)")
+        print("🔒 [HomeLock] Trigger events: \(trigger.events.count)")
+        for (index, evt) in trigger.events.enumerated() {
+            print("   - Event \(index): \(type(of: evt))")
+            if let charEvent = evt as? HMCharacteristicEvent<NSCopying> {
+                print("     Characteristic: \(charEvent.characteristic.characteristicType)")
+                print("     Trigger value: \(String(describing: charEvent.triggerValue))")
+            }
+        }
+        print("🔒 [HomeLock] Trigger actionSets: \(trigger.actionSets.count)")
+        for actionSet in trigger.actionSets {
+            print("   - ActionSet: \(actionSet.name), actions: \(actionSet.actions.count)")
+        }
+
+        // Verificar que el trigger está en home.triggers
+        print("🔒 [HomeLock] Triggers en home después de crear:")
+        for t in home.triggers {
+            let enabled = t.isEnabled ? "✅" : "❌"
+            print("   \(enabled) \(t.name)")
+        }
+
+        print("🔒 [HomeLock] ========== LOCK TRIGGER CREADO EXITOSAMENTE ==========")
 
         return trigger.uniqueIdentifier
     }
@@ -130,14 +237,19 @@ class HomeKitService: NSObject, ObservableObject {
     /// Crea un ActionSet que revierte el estado del dispositivo
     private func createRevertActionSet(home: HMHome, characteristic: HMCharacteristic, targetState: Bool, accessoryName: String) async throws -> HMActionSet {
         let actionSetName = "HomeLock_Revert_\(characteristic.uniqueIdentifier.uuidString)"
+        print("🔧 [HomeLock] Creando ActionSet: \(actionSetName)")
+        print("🔧 [HomeLock] Target state para revertir: \(targetState)")
 
         // Eliminar action set existente si hay uno
         if let existing = home.actionSets.first(where: { $0.name == actionSetName }) {
+            print("🔧 [HomeLock] Eliminando ActionSet existente...")
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 home.removeActionSet(existing) { error in
                     if let error {
+                        print("❌ [HomeLock] Error eliminando ActionSet: \(error)")
                         continuation.resume(throwing: error)
                     } else {
+                        print("✅ [HomeLock] ActionSet existente eliminado")
                         continuation.resume()
                     }
                 }
@@ -145,30 +257,43 @@ class HomeKitService: NSObject, ObservableObject {
         }
 
         // Crear nuevo action set
+        print("🔧 [HomeLock] Creando nuevo ActionSet...")
         let actionSet: HMActionSet = try await withCheckedThrowingContinuation { continuation in
             home.addActionSet(withName: actionSetName) { actionSet, error in
                 if let error {
+                    print("❌ [HomeLock] Error creando ActionSet: \(error)")
                     continuation.resume(throwing: error)
                 } else if let actionSet {
+                    print("✅ [HomeLock] ActionSet creado: \(actionSet.uniqueIdentifier)")
                     continuation.resume(returning: actionSet)
                 } else {
+                    print("❌ [HomeLock] ActionSet es nil sin error")
                     continuation.resume(throwing: HomeKitError.triggerCreationFailed)
                 }
             }
         }
 
         // Crear la acción que establece el estado
+        print("🔧 [HomeLock] Creando HMCharacteristicWriteAction...")
+        print("🔧 [HomeLock] Characteristic UUID: \(characteristic.uniqueIdentifier)")
+        print("🔧 [HomeLock] Target value: \(targetState)")
+
         let action = HMCharacteristicWriteAction(characteristic: characteristic, targetValue: targetState as NSCopying)
+        print("🔧 [HomeLock] Action creada, agregando al ActionSet...")
+
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             actionSet.addAction(action) { error in
                 if let error {
+                    print("❌ [HomeLock] Error agregando action: \(error)")
                     continuation.resume(throwing: error)
                 } else {
+                    print("✅ [HomeLock] Action agregada al ActionSet")
                     continuation.resume()
                 }
             }
         }
 
+        print("🔧 [HomeLock] ActionSet listo con \(actionSet.actions.count) actions")
         return actionSet
     }
 
@@ -238,7 +363,37 @@ extension HomeKitService: HMHomeManagerDelegate {
             self.accessories = allAccessories
             self.outlets = filterOutlets(from: allAccessories)
 
-            print("HomeKit: \(homes.count) homes, \(accessories.count) accessories, \(outlets.count) outlets/switches")
+            print("🏠 [HomeKit] ========== HOMES ACTUALIZADOS ==========")
+            print("🏠 [HomeKit] \(homes.count) homes, \(accessories.count) accessories, \(outlets.count) outlets/switches")
+
+            // Debug: listar todos los triggers existentes
+            for home in manager.homes {
+                print("🏠 [HomeKit] Home: \(home.name)")
+                print("   Triggers: \(home.triggers.count)")
+                for trigger in home.triggers {
+                    let enabled = trigger.isEnabled ? "✅" : "❌"
+                    print("   \(enabled) \(trigger.name) (UUID: \(trigger.uniqueIdentifier))")
+                    if let eventTrigger = trigger as? HMEventTrigger {
+                        print("      Events: \(eventTrigger.events.count)")
+                        for event in eventTrigger.events {
+                            if let charEvent = event as? HMCharacteristicEvent<NSCopying> {
+                                print("      - CharEvent: triggerValue=\(String(describing: charEvent.triggerValue))")
+                            }
+                        }
+                        print("      ActionSets: \(eventTrigger.actionSets.count)")
+                        for actionSet in eventTrigger.actionSets {
+                            print("      - \(actionSet.name): \(actionSet.actions.count) actions")
+                        }
+                    }
+                }
+                print("   ActionSets: \(home.actionSets.count)")
+                for actionSet in home.actionSets {
+                    if actionSet.name.hasPrefix("HomeLock") {
+                        print("   - \(actionSet.name): \(actionSet.actions.count) actions")
+                    }
+                }
+            }
+            print("🏠 [HomeKit] ==========================================")
         }
     }
 }
