@@ -46,18 +46,33 @@ class LockManager: ObservableObject {
     private var pollingTimer: Timer?
     private let pollingInterval: TimeInterval = 5.0 // Check every 5 seconds
     private var isPolling = false
+    private var isEnforcing = false // Prevent overlapping enforcement
 
     private init() {
         loadLocks()
     }
 
+    deinit {
+        pollingTimer?.invalidate()
+        pollingTimer = nil
+        for timer in expirationTimers.values {
+            timer.invalidate()
+        }
+        expirationTimers.removeAll()
+    }
+
     /// Configura el servicio de HomeKit para poder eliminar triggers
     func configure(with homeKitService: HomeKitService) {
+        // Solo configurar si es diferente o es la primera vez
+        guard self.homeKitService !== homeKitService else { return }
+
         self.homeKitService = homeKitService
+
         // Verificar locks expirados al iniciar
-        Task {
-            await checkExpiredLocks()
+        Task { [weak self] in
+            await self?.checkExpiredLocks()
         }
+
         // Iniciar polling si hay locks activos
         if !locks.isEmpty {
             startPolling()
@@ -150,15 +165,30 @@ class LockManager: ObservableObject {
 
         print("🔄 [LockManager] Iniciando polling cada \(pollingInterval)s")
 
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+        // Invalidar timer existente por seguridad
+        pollingTimer?.invalidate()
+
+        // Crear timer en el main run loop explícitamente
+        let timer = Timer(timeInterval: pollingInterval, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            // Solo ejecutar si no hay otra ejecución en progreso
+            guard !self.isEnforcing else {
+                print("⏭️ [LockManager] Skipping poll - previous enforcement still running")
+                return
+            }
+            Task { @MainActor [weak self] in
                 await self?.enforceAllLocks()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        pollingTimer = timer
 
         // También ejecutar inmediatamente
-        Task {
-            await enforceAllLocks()
+        Task { [weak self] in
+            await self?.enforceAllLocks()
         }
     }
 
@@ -174,12 +204,20 @@ class LockManager: ObservableObject {
 
     /// Verifica y enforce todos los locks activos
     private func enforceAllLocks() async {
+        // Prevent overlapping enforcement
+        guard !isEnforcing else { return }
+        isEnforcing = true
+        defer { isEnforcing = false }
+
         guard let homeKit = homeKitService else {
             print("⚠️ [LockManager] HomeKitService no disponible")
             return
         }
 
-        for (accessoryID, config) in locks {
+        // Capturar locks al inicio para evitar mutación durante iteración
+        let currentLocks = locks
+
+        for (accessoryID, config) in currentLocks {
             // Verificar si expiró
             if config.isExpired {
                 print("⏰ [LockManager] Lock expirado durante polling: \(config.accessoryName)")
@@ -257,22 +295,25 @@ class LockManager: ObservableObject {
     private func scheduleExpiration(for accessoryID: UUID, at date: Date) {
         // Cancelar timer existente
         expirationTimers[accessoryID]?.invalidate()
+        expirationTimers.removeValue(forKey: accessoryID)
 
         let interval = date.timeIntervalSinceNow
         guard interval > 0 else {
             // Ya expiró
-            Task {
-                await handleExpiration(for: accessoryID)
+            Task { [weak self] in
+                await self?.handleExpiration(for: accessoryID)
             }
             return
         }
 
-        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
-            Task { @MainActor in
+        // Crear timer en el main run loop explícitamente
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] timer in
+            timer.invalidate()
+            Task { @MainActor [weak self] in
                 await self?.handleExpiration(for: accessoryID)
             }
         }
-
+        RunLoop.main.add(timer, forMode: .common)
         expirationTimers[accessoryID] = timer
     }
 
