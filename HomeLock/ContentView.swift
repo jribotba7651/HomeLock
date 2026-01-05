@@ -78,42 +78,51 @@ struct AccessoryRow: View {
     }
 
     var body: some View {
-        HStack {
-            // Lock indicator
-            if isLocked {
-                Image(systemName: "lock.fill")
-                    .foregroundStyle(.orange)
-                    .font(.caption)
+        HStack(spacing: 12) {
+            // Power state indicator
+            ZStack {
+                Circle()
+                    .fill(isLoading ? Color.clear : (isOn ? Color.green : Color.gray.opacity(0.3)))
+                    .frame(width: 12, height: 12)
+
+                if isLoading {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                }
             }
+            .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(accessory.name)
-                    .font(.headline)
-                if let room = accessory.room {
-                    Text(room.name)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(accessory.name)
+                        .font(.headline)
+
+                    // Lock indicator
+                    if isLocked {
+                        Image(systemName: "lock.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption2)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    if let room = accessory.room {
+                        Text(room.name)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if !isLoading {
+                        Text(isOn ? "Encendido" : "Apagado")
+                            .font(.caption)
+                            .foregroundStyle(isOn ? .green : .secondary)
+                    }
                 }
             }
 
             Spacer()
-
-            if isLoading {
-                ProgressView()
-            } else {
-                Toggle("", isOn: $isOn)
-                    .labelsHidden()
-                    .disabled(isLocked) // Deshabilitar toggle si está bloqueado
-                    .onChange(of: isOn) { _, newValue in
-                        guard !isLocked else { return }
-                        Task {
-                            try? await homeKit.setAccessoryPower(accessory, on: newValue)
-                        }
-                    }
-            }
         }
         .padding(.vertical, 4)
-        .opacity(isLocked ? 0.8 : 1.0)
         .task {
             if let state = await homeKit.isAccessoryOn(accessory) {
                 isOn = state
