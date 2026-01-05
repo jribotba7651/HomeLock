@@ -10,6 +10,7 @@ import HomeKit
 
 struct ContentView: View {
     @StateObject private var homeKit = HomeKitService()
+    @ObservedObject private var lockManager = LockManager.shared
 
     var body: some View {
         NavigationStack {
@@ -31,7 +32,11 @@ struct ContentView: View {
                         NavigationLink {
                             DeviceDetailView(accessory: accessory, homeKit: homeKit)
                         } label: {
-                            AccessoryRow(accessory: accessory, homeKit: homeKit)
+                            AccessoryRow(
+                                accessory: accessory,
+                                homeKit: homeKit,
+                                lockManager: lockManager
+                            )
                         }
                     }
                 }
@@ -52,17 +57,35 @@ struct ContentView: View {
         .onAppear {
             homeKit.requestAuthorization()
         }
+        .onChange(of: homeKit.isAuthorized) { _, isAuthorized in
+            if isAuthorized {
+                lockManager.configure(with: homeKit)
+            }
+        }
     }
 }
 
 struct AccessoryRow: View {
     let accessory: HMAccessory
     let homeKit: HomeKitService
+    @ObservedObject var lockManager: LockManager
+
     @State private var isOn: Bool = false
     @State private var isLoading: Bool = true
 
+    private var isLocked: Bool {
+        lockManager.isLocked(accessory.uniqueIdentifier)
+    }
+
     var body: some View {
         HStack {
+            // Lock indicator
+            if isLocked {
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(.orange)
+                    .font(.caption)
+            }
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(accessory.name)
                     .font(.headline)
@@ -80,7 +103,9 @@ struct AccessoryRow: View {
             } else {
                 Toggle("", isOn: $isOn)
                     .labelsHidden()
+                    .disabled(isLocked) // Deshabilitar toggle si está bloqueado
                     .onChange(of: isOn) { _, newValue in
+                        guard !isLocked else { return }
                         Task {
                             try? await homeKit.setAccessoryPower(accessory, on: newValue)
                         }
@@ -88,6 +113,7 @@ struct AccessoryRow: View {
             }
         }
         .padding(.vertical, 4)
+        .opacity(isLocked ? 0.8 : 1.0)
         .task {
             if let state = await homeKit.isAccessoryOn(accessory) {
                 isOn = state

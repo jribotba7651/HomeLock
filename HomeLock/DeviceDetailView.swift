@@ -33,16 +33,26 @@ enum LockDuration: String, CaseIterable, Identifiable {
 struct DeviceDetailView: View {
     let accessory: HMAccessory
     @ObservedObject var homeKit: HomeKitService
+    @ObservedObject var lockManager = LockManager.shared
 
     @State private var isOn: Bool = false
     @State private var isLoading: Bool = true
+    @State private var isLocking: Bool = false
     @State private var selectedDuration: LockDuration = .thirtyMinutes
-    @State private var lockToState: Bool = false // Estado al que se bloqueará (on/off)
-    @State private var isLocked: Bool = false
-    @State private var lockEndTime: Date?
+    @State private var lockToState: Bool = false
     @State private var showingLockConfirmation: Bool = false
+    @State private var errorMessage: String?
+    @State private var showingError: Bool = false
 
     @Environment(\.dismiss) private var dismiss
+
+    private var lockConfig: LockConfiguration? {
+        lockManager.getLock(for: accessory.uniqueIdentifier)
+    }
+
+    private var isLocked: Bool {
+        lockConfig != nil
+    }
 
     var body: some View {
         List {
@@ -62,7 +72,7 @@ struct DeviceDetailView: View {
 
                 if let room = accessory.room {
                     HStack {
-                        Label("Habitación", systemImage: "room")
+                        Label("Habitación", systemImage: "door.left.hand.closed")
                         Spacer()
                         Text(room.name)
                             .foregroundStyle(.secondary)
@@ -81,12 +91,16 @@ struct DeviceDetailView: View {
 
             // MARK: - Lock Section
             Section {
-                if isLocked {
+                if let config = lockConfig {
                     // Mostrar estado bloqueado
                     LockedStatusView(
-                        lockToState: lockToState,
-                        lockEndTime: lockEndTime,
-                        onUnlock: unlockDevice
+                        lockToState: config.lockedState,
+                        lockEndTime: config.expiresAt,
+                        onUnlock: {
+                            Task {
+                                await unlockDevice()
+                            }
+                        }
                     )
                 } else {
                     // Selector de estado a bloquear
@@ -109,13 +123,19 @@ struct DeviceDetailView: View {
                     } label: {
                         HStack {
                             Spacer()
-                            Image(systemName: "lock.fill")
+                            if isLocking {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Image(systemName: "lock.fill")
+                            }
                             Text("Bloquear dispositivo")
                             Spacer()
                         }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
+                    .disabled(isLocking)
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0))
                 }
@@ -129,7 +149,7 @@ struct DeviceDetailView: View {
                 }
             } footer: {
                 if !isLocked {
-                    Text("Al bloquear, el dispositivo se mantendrá en el estado seleccionado. Cualquier intento de cambiarlo será revertido automáticamente.")
+                    Text("Al bloquear, el dispositivo se mantendrá en el estado seleccionado. Cualquier intento de cambiarlo será revertido automáticamente por HomeKit.")
                 }
             }
         }
@@ -152,46 +172,63 @@ struct DeviceDetailView: View {
         } message: {
             Text("El dispositivo se mantendrá \(lockToState ? "encendido" : "apagado") durante \(selectedDuration.displayName.lowercased()).")
         }
+        .alert("Error", isPresented: $showingError) {
+            Button("OK") { }
+        } message: {
+            Text(errorMessage ?? "Error desconocido")
+        }
     }
 
     private func loadCurrentState() async {
+        // Cargar estado actual del dispositivo
         if let state = await homeKit.isAccessoryOn(accessory) {
             isOn = state
             lockToState = state // Por defecto bloquear en el estado actual
         }
         isLoading = false
 
-        // TODO: Cargar estado de lock desde persistencia
+        // Configurar LockManager con HomeKitService
+        lockManager.configure(with: homeKit)
     }
 
     private func lockDevice() async {
-        // Primero, establecer el estado deseado
+        isLocking = true
+        defer { isLocking = false }
+
         do {
+            // 1. Establecer el dispositivo en el estado deseado
             try await homeKit.setAccessoryPower(accessory, on: lockToState)
             isOn = lockToState
+
+            // 2. Crear el HMEventTrigger
+            let triggerID = try await homeKit.createLockTrigger(
+                for: accessory,
+                lockedState: lockToState
+            )
+
+            // 3. Persistir la configuración
+            lockManager.addLock(
+                accessoryID: accessory.uniqueIdentifier,
+                accessoryName: accessory.name,
+                triggerID: triggerID,
+                lockedState: lockToState,
+                duration: selectedDuration.seconds
+            )
+
+            print("DeviceDetailView: Lock activado exitosamente")
+
         } catch {
-            print("Error setting power state: \(error)")
+            errorMessage = "No se pudo bloquear el dispositivo: \(error.localizedDescription)"
+            showingError = true
+            print("DeviceDetailView: Error al bloquear: \(error)")
         }
-
-        // Calcular tiempo de expiración
-        if let seconds = selectedDuration.seconds {
-            lockEndTime = Date().addingTimeInterval(seconds)
-        } else {
-            lockEndTime = nil
-        }
-
-        isLocked = true
-
-        // TODO: Crear HMEventTrigger
-        // TODO: Persistir configuración
     }
 
-    private func unlockDevice() {
-        isLocked = false
-        lockEndTime = nil
-
-        // TODO: Eliminar HMEventTrigger
-        // TODO: Eliminar de persistencia
+    private func unlockDevice() async {
+        do {
+            await lockManager.removeLock(for: accessory.uniqueIdentifier)
+            print("DeviceDetailView: Lock desactivado exitosamente")
+        }
     }
 }
 
@@ -203,6 +240,7 @@ struct LockedStatusView: View {
 
     @State private var timeRemaining: String = ""
     @State private var timer: Timer?
+    @State private var isUnlocking: Bool = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -242,16 +280,22 @@ struct LockedStatusView: View {
             }
 
             Button(role: .destructive) {
+                isUnlocking = true
                 onUnlock()
             } label: {
                 HStack {
                     Spacer()
-                    Image(systemName: "lock.open.fill")
+                    if isUnlocking {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "lock.open.fill")
+                    }
                     Text("Desbloquear")
                     Spacer()
                 }
             }
             .buttonStyle(.bordered)
+            .disabled(isUnlocking)
         }
         .padding(.vertical, 8)
         .onAppear {
@@ -277,9 +321,8 @@ struct LockedStatusView: View {
 
         let remaining = endTime.timeIntervalSinceNow
         if remaining <= 0 {
-            timeRemaining = "Expirado"
+            timeRemaining = "Expirando..."
             timer?.invalidate()
-            onUnlock()
             return
         }
 
