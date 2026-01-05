@@ -42,6 +42,11 @@ class LockManager: ObservableObject {
     private var expirationTimers: [UUID: Timer] = [:]
     private var homeKitService: HomeKitService?
 
+    // MARK: - Polling (Fallback for HMEventTrigger)
+    private var pollingTimer: Timer?
+    private let pollingInterval: TimeInterval = 5.0 // Check every 5 seconds
+    private var isPolling = false
+
     private init() {
         loadLocks()
     }
@@ -52,6 +57,10 @@ class LockManager: ObservableObject {
         // Verificar locks expirados al iniciar
         Task {
             await checkExpiredLocks()
+        }
+        // Iniciar polling si hay locks activos
+        if !locks.isEmpty {
+            startPolling()
         }
     }
 
@@ -85,7 +94,10 @@ class LockManager: ObservableObject {
             scheduleExpiration(for: accessoryID, at: expiresAt)
         }
 
-        print("LockManager: Lock agregado para \(accessoryName), expira: \(expiresAt?.description ?? "nunca")")
+        // Iniciar polling
+        startPolling()
+
+        print("🔒 [LockManager] Lock agregado para \(accessoryName), expira: \(expiresAt?.description ?? "nunca")")
     }
 
     /// Elimina un lock
@@ -96,13 +108,13 @@ class LockManager: ObservableObject {
         expirationTimers[accessoryID]?.invalidate()
         expirationTimers.removeValue(forKey: accessoryID)
 
-        // Eliminar trigger de HomeKit
+        // Eliminar trigger de HomeKit (best effort, polling is the real enforcement)
         if let homeKit = homeKitService,
            let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
             do {
                 try await homeKit.removeLockTrigger(triggerID: config.triggerID, for: accessory)
             } catch {
-                print("LockManager: Error eliminando trigger: \(error)")
+                print("⚠️ [LockManager] Error eliminando trigger: \(error)")
             }
         }
 
@@ -110,7 +122,12 @@ class LockManager: ObservableObject {
         locks.removeValue(forKey: accessoryID)
         saveLocks()
 
-        print("LockManager: Lock eliminado para \(config.accessoryName)")
+        // Detener polling si no hay más locks
+        if locks.isEmpty {
+            stopPolling()
+        }
+
+        print("🔓 [LockManager] Lock eliminado para \(config.accessoryName)")
     }
 
     /// Verifica si un accesorio está bloqueado
@@ -125,6 +142,85 @@ class LockManager: ObservableObject {
         return config
     }
 
+    // MARK: - Polling Enforcement
+
+    private func startPolling() {
+        guard !isPolling else { return }
+        isPolling = true
+
+        print("🔄 [LockManager] Iniciando polling cada \(pollingInterval)s")
+
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.enforceAllLocks()
+            }
+        }
+
+        // También ejecutar inmediatamente
+        Task {
+            await enforceAllLocks()
+        }
+    }
+
+    private func stopPolling() {
+        guard isPolling else { return }
+        isPolling = false
+
+        pollingTimer?.invalidate()
+        pollingTimer = nil
+
+        print("⏹️ [LockManager] Polling detenido")
+    }
+
+    /// Verifica y enforce todos los locks activos
+    private func enforceAllLocks() async {
+        guard let homeKit = homeKitService else {
+            print("⚠️ [LockManager] HomeKitService no disponible")
+            return
+        }
+
+        for (accessoryID, config) in locks {
+            // Verificar si expiró
+            if config.isExpired {
+                print("⏰ [LockManager] Lock expirado durante polling: \(config.accessoryName)")
+                await removeLock(for: accessoryID)
+                continue
+            }
+
+            // Buscar el accesorio
+            guard let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) else {
+                print("⚠️ [LockManager] Accesorio no encontrado: \(config.accessoryName)")
+                continue
+            }
+
+            // Leer estado actual
+            guard let currentState = await homeKit.isAccessoryOn(accessory) else {
+                print("⚠️ [LockManager] No se pudo leer estado de: \(config.accessoryName)")
+                continue
+            }
+
+            // Verificar si el estado es el deseado
+            if currentState != config.lockedState {
+                print("🚨 [LockManager] Estado incorrecto detectado!")
+                print("   Dispositivo: \(config.accessoryName)")
+                print("   Estado actual: \(currentState ? "ON" : "OFF")")
+                print("   Estado deseado: \(config.lockedState ? "ON" : "OFF")")
+                print("   ➡️ Revirtiendo...")
+
+                // Revertir al estado bloqueado
+                do {
+                    try await homeKit.setAccessoryPower(accessory, on: config.lockedState)
+                    print("✅ [LockManager] Revertido exitosamente a \(config.lockedState ? "ON" : "OFF")")
+                } catch {
+                    print("❌ [LockManager] Error revirtiendo: \(error.localizedDescription)")
+                }
+            } else {
+                // Estado correcto, log silencioso
+                // print("✓ [LockManager] \(config.accessoryName): OK")
+            }
+        }
+    }
+
     // MARK: - Persistence
 
     private func saveLocks() {
@@ -132,7 +228,7 @@ class LockManager: ObservableObject {
             let data = try JSONEncoder().encode(Array(locks.values))
             UserDefaults.standard.set(data, forKey: userDefaultsKey)
         } catch {
-            print("LockManager: Error guardando locks: \(error)")
+            print("❌ [LockManager] Error guardando locks: \(error)")
         }
     }
 
@@ -150,9 +246,9 @@ class LockManager: ObservableObject {
                 }
             }
 
-            print("LockManager: \(locks.count) locks cargados")
+            print("🔒 [LockManager] \(locks.count) locks cargados")
         } catch {
-            print("LockManager: Error cargando locks: \(error)")
+            print("❌ [LockManager] Error cargando locks: \(error)")
         }
     }
 
@@ -182,7 +278,7 @@ class LockManager: ObservableObject {
 
     private func handleExpiration(for accessoryID: UUID) async {
         guard let config = locks[accessoryID] else { return }
-        print("LockManager: Lock expirado para \(config.accessoryName)")
+        print("⏰ [LockManager] Lock expirado para \(config.accessoryName)")
         await removeLock(for: accessoryID)
     }
 
