@@ -7,6 +7,7 @@
 
 import Foundation
 import HomeKit
+import Combine
 
 @MainActor
 class HomeKitService: NSObject, ObservableObject {
