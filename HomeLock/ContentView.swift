@@ -28,7 +28,11 @@ struct ContentView: View {
                     )
                 } else {
                     List(homeKit.outlets, id: \.uniqueIdentifier) { accessory in
-                        AccessoryRow(accessory: accessory, homeKit: homeKit)
+                        NavigationLink {
+                            DeviceDetailView(accessory: accessory, homeKit: homeKit)
+                        } label: {
+                            AccessoryRow(accessory: accessory, homeKit: homeKit)
+                        }
                     }
                 }
             }
