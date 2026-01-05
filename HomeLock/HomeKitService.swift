@@ -116,28 +116,84 @@ class HomeKitService: NSObject, ObservableObject {
         print("🔒 [HomeLock] Valor actual: \(String(describing: powerState.value))")
 
         let triggerName = "HomeLock_\(accessory.uniqueIdentifier.uuidString)"
+        let actionSetPrefix = "HomeLock_Revert_"
         print("🔒 [HomeLock] Nombre del trigger: \(triggerName)")
 
-        // Eliminar trigger existente si hay uno
-        print("🔒 [HomeLock] Triggers existentes en home: \(home.triggers.count)")
+        // ========== LIMPIEZA AGRESIVA ==========
+        // Contar triggers HomeLock existentes
+        let homeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
+        let homeLockActionSets = home.actionSets.filter { $0.name.hasPrefix("HomeLock_") }
+        print("🧹 [HomeLock] ANTES - HomeLock triggers: \(homeLockTriggers.count), ActionSets: \(homeLockActionSets.count)")
+
+        print("🔒 [HomeLock] Todos los triggers en home (\(home.triggers.count)):")
         for existingTrigger in home.triggers {
-            print("   - \(existingTrigger.name): enabled=\(existingTrigger.isEnabled)")
+            let isHomeLock = existingTrigger.name.hasPrefix("HomeLock_") ? "🔒" : "  "
+            print("   \(isHomeLock) \(existingTrigger.name): enabled=\(existingTrigger.isEnabled)")
         }
 
-        if let existingTrigger = home.triggers.first(where: { $0.name == triggerName }) {
-            print("🔒 [HomeLock] Eliminando trigger existente...")
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                home.removeTrigger(existingTrigger) { error in
-                    if let error {
-                        print("❌ [HomeLock] Error eliminando trigger existente: \(error)")
-                        continuation.resume(throwing: error)
-                    } else {
-                        print("✅ [HomeLock] Trigger existente eliminado")
+        // Eliminar TODOS los triggers HomeLock_ para este dispositivo
+        let triggersToRemove = home.triggers.filter { $0.name == triggerName }
+        print("🧹 [HomeLock] Triggers a eliminar para este dispositivo: \(triggersToRemove.count)")
+
+        for trigger in triggersToRemove {
+            print("🧹 [HomeLock] Eliminando trigger: \(trigger.name)...")
+
+            // Primero eliminar action sets asociados
+            if let eventTrigger = trigger as? HMEventTrigger {
+                for actionSet in eventTrigger.actionSets where actionSet.name.hasPrefix(actionSetPrefix) {
+                    print("🧹 [HomeLock] Eliminando ActionSet asociado: \(actionSet.name)")
+                    try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                        home.removeActionSet(actionSet) { error in
+                            if let error {
+                                print("⚠️ [HomeLock] Error eliminando ActionSet: \(error.localizedDescription)")
+                            }
+                            continuation.resume()
+                        }
+                    }
+                }
+            }
+
+            // Luego eliminar el trigger
+            do {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    home.removeTrigger(trigger) { error in
+                        if let error {
+                            print("❌ [HomeLock] Error eliminando trigger: \(error.localizedDescription)")
+                            continuation.resume(throwing: error)
+                        } else {
+                            print("✅ [HomeLock] Trigger eliminado: \(trigger.name)")
+                            continuation.resume()
+                        }
+                    }
+                }
+            } catch {
+                print("⚠️ [HomeLock] Continuando a pesar del error: \(error.localizedDescription)")
+            }
+        }
+
+        // También limpiar ActionSets huérfanos de este dispositivo
+        let orphanedActionSets = home.actionSets.filter {
+            $0.name.hasPrefix(actionSetPrefix) && $0.actions.isEmpty == false
+        }
+        for actionSet in orphanedActionSets {
+            // Verificar si el actionSet pertenece a esta characteristic
+            if let action = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
+               action.characteristic.service?.accessory?.uniqueIdentifier == accessory.uniqueIdentifier {
+                print("🧹 [HomeLock] Eliminando ActionSet huérfano: \(actionSet.name)")
+                try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    home.removeActionSet(actionSet) { error in
                         continuation.resume()
                     }
                 }
             }
         }
+
+        // Pequeña pausa para que HomeKit sincronice
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 segundos
+
+        // Verificar limpieza
+        let remainingHomeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
+        print("🧹 [HomeLock] DESPUÉS - HomeLock triggers: \(remainingHomeLockTriggers.count)")
 
         // Crear el evento: cuando PowerState cambia al estado opuesto al bloqueado
         let unwantedState = !lockedState
@@ -226,8 +282,18 @@ class HomeKitService: NSObject, ObservableObject {
         print("🔒 [HomeLock] Triggers en home después de crear:")
         for t in home.triggers {
             let enabled = t.isEnabled ? "✅" : "❌"
-            print("   \(enabled) \(t.name)")
+            let isHomeLock = t.name.hasPrefix("HomeLock_") ? "🔒" : "  "
+            print("   \(enabled) \(isHomeLock) \(t.name)")
         }
+
+        // Conteo final
+        let finalHomeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
+        let finalHomeLockActionSets = home.actionSets.filter { $0.name.hasPrefix("HomeLock_") }
+        print("📊 [HomeLock] CONTEO FINAL - HomeLock triggers: \(finalHomeLockTriggers.count), ActionSets: \(finalHomeLockActionSets.count)")
+
+        // Verificar que el trigger recién creado está en la lista
+        let triggerExists = home.triggers.contains(where: { $0.uniqueIdentifier == trigger.uniqueIdentifier })
+        print("📊 [HomeLock] ¿Trigger existe en home.triggers? \(triggerExists ? "✅ SÍ" : "❌ NO")")
 
         print("🔒 [HomeLock] ========== LOCK TRIGGER CREADO EXITOSAMENTE ==========")
 
