@@ -54,3 +54,11 @@
 "Error" = "Error";
 "Unknown error" = "Unknown error";
 "Could not lock the device: %@" = "Could not lock the device: %@";
+
+// Cleanup
+"Remove all HomeLock automations" = "Remove all HomeLock automations";
+"Remove all HomeLock automations?" = "Remove all HomeLock automations?";
+"Remove all" = "Remove all";
+"This will remove all HomeLock triggers and automations from your HomeKit. Your other automations will not be affected." = "This will remove all HomeLock triggers and automations from your HomeKit. Your other automations will not be affected.";
+"Cleanup complete" = "Cleanup complete";
+"Removed %lld HomeLock automation(s)." = "Removed %lld HomeLock automation(s).";

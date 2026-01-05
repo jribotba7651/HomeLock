@@ -12,6 +12,10 @@ struct ContentView: View {
     @StateObject private var homeKit = HomeKitService()
     @ObservedObject private var lockManager = LockManager.shared
 
+    @State private var showingCleanupConfirmation = false
+    @State private var isCleaningUp = false
+    @State private var cleanupResult: Int?
+
     var body: some View {
         NavigationStack {
             Group {
@@ -43,6 +47,22 @@ struct ContentView: View {
             }
             .navigationTitle("HomeLock")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Button(role: .destructive) {
+                            showingCleanupConfirmation = true
+                        } label: {
+                            Label(String(localized: "Remove all HomeLock automations"), systemImage: "trash")
+                        }
+                        .disabled(isCleaningUp)
+                    } label: {
+                        if isCleaningUp {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack {
                         Image(systemName: homeKit.isAuthorized ? "checkmark.circle.fill" : "circle")
@@ -51,6 +71,33 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                     }
                     .font(.caption)
+                }
+            }
+            .confirmationDialog(
+                String(localized: "Remove all HomeLock automations?"),
+                isPresented: $showingCleanupConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(String(localized: "Remove all"), role: .destructive) {
+                    Task {
+                        await performCleanup()
+                    }
+                }
+                Button(String(localized: "Cancel"), role: .cancel) { }
+            } message: {
+                Text(String(localized: "This will remove all HomeLock triggers and automations from your HomeKit. Your other automations will not be affected."))
+            }
+            .alert(
+                String(localized: "Cleanup complete"),
+                isPresented: Binding(
+                    get: { cleanupResult != nil },
+                    set: { if !$0 { cleanupResult = nil } }
+                )
+            ) {
+                Button("OK") { cleanupResult = nil }
+            } message: {
+                if let count = cleanupResult {
+                    Text(String(localized: "Removed \(count) HomeLock automation(s)."))
                 }
             }
         }
@@ -62,6 +109,20 @@ struct ContentView: View {
                 lockManager.configure(with: homeKit)
             }
         }
+    }
+
+    private func performCleanup() async {
+        isCleaningUp = true
+        defer { isCleaningUp = false }
+
+        // Also clear local locks
+        for accessoryID in lockManager.locks.keys {
+            await lockManager.removeLock(for: accessoryID)
+        }
+
+        // Remove HomeKit automations
+        let removed = await homeKit.removeAllHomeLockAutomations()
+        cleanupResult = removed
     }
 }
 

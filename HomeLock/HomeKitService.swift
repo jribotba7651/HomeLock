@@ -412,6 +412,90 @@ class HomeKitService: NSObject, ObservableObject {
         try await home.removeTrigger(trigger)
         print("HomeLock: Trigger eliminado para \(accessory.name)")
     }
+
+    /// Elimina TODAS las automatizaciones de HomeLock (triggers y action sets que empiezan con "HomeLock_")
+    /// - Returns: Número de elementos eliminados (triggers + action sets)
+    func removeAllHomeLockAutomations() async -> Int {
+        var removedCount = 0
+
+        for home in homes {
+            print("🧹 [HomeLock] Limpiando home: \(home.name)")
+
+            // 1. Eliminar todos los triggers que empiezan con "HomeLock_"
+            let homeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
+            print("🧹 [HomeLock] Encontrados \(homeLockTriggers.count) triggers HomeLock_")
+
+            for trigger in homeLockTriggers {
+                do {
+                    // Primero eliminar action sets asociados al trigger
+                    if let eventTrigger = trigger as? HMEventTrigger {
+                        for actionSet in eventTrigger.actionSets where actionSet.name.hasPrefix("HomeLock_") {
+                            try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                                home.removeActionSet(actionSet) { error in
+                                    if let error {
+                                        print("⚠️ [HomeLock] Error eliminando ActionSet asociado: \(error.localizedDescription)")
+                                    }
+                                    continuation.resume()
+                                }
+                            }
+                        }
+                    }
+
+                    // Eliminar el trigger
+                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                        home.removeTrigger(trigger) { error in
+                            if let error {
+                                print("❌ [HomeLock] Error eliminando trigger \(trigger.name): \(error.localizedDescription)")
+                                continuation.resume(throwing: error)
+                            } else {
+                                print("✅ [HomeLock] Trigger eliminado: \(trigger.name)")
+                                continuation.resume()
+                            }
+                        }
+                    }
+                    removedCount += 1
+                } catch {
+                    print("⚠️ [HomeLock] No se pudo eliminar trigger: \(error.localizedDescription)")
+                }
+            }
+
+            // 2. Eliminar action sets huérfanos que empiezan con "HomeLock_"
+            let homeLockActionSets = home.actionSets.filter { $0.name.hasPrefix("HomeLock_") }
+            print("🧹 [HomeLock] Encontrados \(homeLockActionSets.count) ActionSets HomeLock_")
+
+            for actionSet in homeLockActionSets {
+                do {
+                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                        home.removeActionSet(actionSet) { error in
+                            if let error {
+                                print("❌ [HomeLock] Error eliminando ActionSet \(actionSet.name): \(error.localizedDescription)")
+                                continuation.resume(throwing: error)
+                            } else {
+                                print("✅ [HomeLock] ActionSet eliminado: \(actionSet.name)")
+                                continuation.resume()
+                            }
+                        }
+                    }
+                    removedCount += 1
+                } catch {
+                    print("⚠️ [HomeLock] No se pudo eliminar ActionSet: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        print("🧹 [HomeLock] Limpieza completada. Eliminados: \(removedCount) elementos")
+        return removedCount
+    }
+
+    /// Cuenta el número de automatizaciones HomeLock existentes
+    func countHomeLockAutomations() -> Int {
+        var count = 0
+        for home in homes {
+            count += home.triggers.filter { $0.name.hasPrefix("HomeLock_") }.count
+            count += home.actionSets.filter { $0.name.hasPrefix("HomeLock_") }.count
+        }
+        return count
+    }
 }
 
 // MARK: - HMHomeManagerDelegate
