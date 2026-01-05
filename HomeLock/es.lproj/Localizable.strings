@@ -1,0 +1,56 @@
+/*
+  Localizable.strings (Spanish)
+  HomeLock
+
+  Created by Juan C. Ribot on 1/4/26.
+*/
+
+// ContentView
+"Connecting to HomeKit" = "Conectando a HomeKit";
+"Waiting for authorization..." = "Esperando autorización...";
+"No devices" = "Sin dispositivos";
+"No outlets, switches, or lights found in your HomeKit" = "No se encontraron enchufes, switches o luces en tu HomeKit";
+"On" = "Encendido";
+"Off" = "Apagado";
+
+// DeviceDetailView - Information Section
+"Status" = "Estado";
+"Room" = "Habitación";
+"Model" = "Modelo";
+"Unknown" = "Desconocido";
+"Information" = "Información";
+
+// DeviceDetailView - Lock Section
+"Parental Control" = "Control Parental";
+"Lock to" = "Bloquear en";
+"Duration" = "Duración";
+"Lock device" = "Bloquear dispositivo";
+"When locked, the device will stay in the selected state. Any attempt to change it will be automatically reverted by HomeKit." = "Al bloquear, el dispositivo se mantendrá en el estado seleccionado. Cualquier intento de cambiarlo será revertido automáticamente por HomeKit.";
+
+// Lock Duration
+"15 min" = "15 min";
+"30 min" = "30 min";
+"1 hour" = "1 hora";
+"2 hours" = "2 horas";
+"Until I unlock" = "Hasta desbloquear";
+
+// Lock Confirmation Dialog
+"Lock %@?" = "¿Bloquear %@?";
+"Lock for %@" = "Bloquear %@";
+"Cancel" = "Cancelar";
+"The device will be kept %@ for %@." = "El dispositivo se mantendrá %@ durante %@.";
+
+// Locked Status View
+"Device locked" = "Dispositivo bloqueado";
+"Keeping %@" = "Manteniendo %@";
+"on" = "encendido";
+"off" = "apagado";
+"Time remaining:" = "Tiempo restante:";
+"Locked indefinitely" = "Bloqueado indefinidamente";
+"Unlock" = "Desbloquear";
+"Expiring..." = "Expirando...";
+
+// Errors
+"Error" = "Error";
+"Unknown error" = "Error desconocido";
+"Could not lock the device: %@" = "No se pudo bloquear el dispositivo: %@";

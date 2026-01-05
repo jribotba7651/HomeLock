@@ -17,15 +17,15 @@ struct ContentView: View {
             Group {
                 if !homeKit.isAuthorized {
                     ContentUnavailableView(
-                        "Conectando a HomeKit",
+                        String(localized: "Connecting to HomeKit"),
                         systemImage: "homekit",
-                        description: Text("Esperando autorización...")
+                        description: Text(String(localized: "Waiting for authorization..."))
                     )
                 } else if homeKit.outlets.isEmpty {
                     ContentUnavailableView(
-                        "Sin dispositivos",
+                        String(localized: "No devices"),
                         systemImage: "poweroutlet.type.b",
-                        description: Text("No se encontraron enchufes, switches o luces en tu HomeKit")
+                        description: Text(String(localized: "No outlets, switches, or lights found in your HomeKit"))
                     )
                 } else {
                     List(homeKit.outlets, id: \.uniqueIdentifier) { accessory in
@@ -113,7 +113,7 @@ struct AccessoryRow: View {
                     }
 
                     if !isLoading {
-                        Text(isOn ? "Encendido" : "Apagado")
+                        Text(isOn ? String(localized: "On") : String(localized: "Off"))
                             .font(.caption)
                             .foregroundStyle(isOn ? .green : .secondary)
                     }

@@ -1,0 +1,56 @@
+/*
+  Localizable.strings (English)
+  HomeLock
+
+  Created by Juan C. Ribot on 1/4/26.
+*/
+
+// ContentView
+"Connecting to HomeKit" = "Connecting to HomeKit";
+"Waiting for authorization..." = "Waiting for authorization...";
+"No devices" = "No devices";
+"No outlets, switches, or lights found in your HomeKit" = "No outlets, switches, or lights found in your HomeKit";
+"On" = "On";
+"Off" = "Off";
+
+// DeviceDetailView - Information Section
+"Status" = "Status";
+"Room" = "Room";
+"Model" = "Model";
+"Unknown" = "Unknown";
+"Information" = "Information";
+
+// DeviceDetailView - Lock Section
+"Parental Control" = "Parental Control";
+"Lock to" = "Lock to";
+"Duration" = "Duration";
+"Lock device" = "Lock device";
+"When locked, the device will stay in the selected state. Any attempt to change it will be automatically reverted by HomeKit." = "When locked, the device will stay in the selected state. Any attempt to change it will be automatically reverted by HomeKit.";
+
+// Lock Duration
+"15 min" = "15 min";
+"30 min" = "30 min";
+"1 hour" = "1 hour";
+"2 hours" = "2 hours";
+"Until I unlock" = "Until I unlock";
+
+// Lock Confirmation Dialog
+"Lock %@?" = "Lock %@?";
+"Lock for %@" = "Lock for %@";
+"Cancel" = "Cancel";
+"The device will be kept %@ for %@." = "The device will be kept %@ for %@.";
+
+// Locked Status View
+"Device locked" = "Device locked";
+"Keeping %@" = "Keeping %@";
+"on" = "on";
+"off" = "off";
+"Time remaining:" = "Time remaining:";
+"Locked indefinitely" = "Locked indefinitely";
+"Unlock" = "Unlock";
+"Expiring..." = "Expiring...";
+
+// Errors
+"Error" = "Error";
+"Unknown error" = "Unknown error";
+"Could not lock the device: %@" = "Could not lock the device: %@";
