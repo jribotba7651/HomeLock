@@ -1,3 +1,8 @@
+//
+//  StoreManager.swift
+//  HomeLock
+//
+
 import SwiftUI
 import StoreKit
 
