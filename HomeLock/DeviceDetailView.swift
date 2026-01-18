@@ -21,6 +21,7 @@ struct DeviceDetailView: View {
     @State private var showingLockConfirmation: Bool = false
     @State private var errorMessage: String?
     @State private var showingError: Bool = false
+    @State private var showingPaywall: Bool = false
 
     // New duration picker state
     @State private var untilUnlock: Bool = false
@@ -171,7 +172,9 @@ struct DeviceDetailView: View {
                     // Lock button
                     Button {
                         // Only show confirmation for indefinite locks (until unlock)
-                        if untilUnlock {
+                        if !lockManager.canAddLock {
+                            showingPaywall = true
+                        } else if untilUnlock {
                             showingLockConfirmation = true
                         } else {
                             // Direct lock for timed locks
@@ -235,6 +238,9 @@ struct DeviceDetailView: View {
             Button("OK") { }
         } message: {
             Text(errorMessage ?? String(localized: "Unknown error"))
+        }
+        .sheet(isPresented: $showingPaywall) {
+            PaywallView()
         }
     }
 

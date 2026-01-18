@@ -145,6 +145,7 @@ enum AuthenticationError: LocalizedError {
     case userFallback
     case authenticationFailed
     case pinIncorrect
+    case pinMismatch
     case pinLockout
     case invalidPin
 
@@ -166,6 +167,8 @@ enum AuthenticationError: LocalizedError {
             return "Authentication failed. Please try again."
         case .pinIncorrect:
             return "Incorrect PIN. Please try again."
+        case .pinMismatch:
+            return "The PINs do not match. Please try again."
         case .pinLockout:
             return "Too many failed attempts. Please try again in 5 minutes."
         case .invalidPin:

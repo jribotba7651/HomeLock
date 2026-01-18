@@ -12,6 +12,7 @@ import UserNotifications
 @main
 struct HomeLockApp: App {
     @AppStorage("appearanceMode") var appearanceMode: Int = 0
+    @StateObject private var storeManager = StoreManager.shared
 
     init() {
         registerBackgroundTasks()

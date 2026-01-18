@@ -63,7 +63,7 @@ class AuthenticationManager: ObservableObject {
 
         // Validate confirmation
         guard pin == confirmation else {
-            return .failure(.invalidPin)
+            return .failure(.pinMismatch)
         }
 
         // Save PIN

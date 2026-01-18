@@ -29,14 +29,29 @@ class HomeKitService: NSObject, ObservableObject {
     }
 
     /// Filtra accesorios que tienen servicios de tipo outlet o switch
+    /// Filtra accesorios que tienen servicios de tipo outlet o switch
     private func filterOutlets(from accessories: [HMAccessory]) -> [HMAccessory] {
         accessories.filter { accessory in
-            accessory.services.contains { service in
-                service.serviceType == HMServiceTypeOutlet ||
-                service.serviceType == HMServiceTypeSwitch ||
-                service.serviceType == HMServiceTypeLightbulb
-            }
+            let serviceTypes = accessory.services.map { $0.serviceType }
+            return !HomeKitService.shouldFilter(manufacturer: accessory.manufacturer, services: serviceTypes)
         }
+    }
+
+    /// Lógica central de filtrado (testable)
+    static func shouldFilter(manufacturer: String?, services: [String]) -> Bool {
+        // No longer filtering Lutron devices. Instead, we implement proper cleanup.
+        
+        // Debe tener al menos uno de estos servicios para NO ser filtrado (asumiendo que queremos incluirlos)
+        // Pero la lógica original era: incluir si tiene uno de estos.
+        // Entonces devolvemos FALSE si tiene uno de estos (para que filter no lo descarte)
+        // Y TRUE si NO tiene ninguno (para filtrarlo).
+        let hasRequiredService = services.contains { type in
+            type == HMServiceTypeOutlet ||
+            type == HMServiceTypeSwitch ||
+            type == HMServiceTypeLightbulb
+        }
+        
+        return !hasRequiredService
     }
 
     /// Obtiene el servicio controlable (outlet/switch/light) de un accesorio
@@ -150,6 +165,15 @@ class HomeKitService: NSObject, ObservableObject {
                     }
                 }
 
+                // CLEANUP: Disable notifications for the characteristic to release bridge resources
+                if let eventTrigger = trigger as? HMEventTrigger {
+                    for event in eventTrigger.events {
+                        if let charEvent = event as? HMCharacteristicEvent<NSCopying> {
+                            try? await charEvent.characteristic.enableNotification(false)
+                        }
+                    }
+                }
+
                 try? await home.removeTrigger(trigger)
             }
 
@@ -192,7 +216,15 @@ class HomeKitService: NSObject, ObservableObject {
                 }
             }
 
-            // Luego eliminar el trigger
+            // CLEANUP: Disable notifications for the characteristic to release bridge resources
+            if let eventTrigger = trigger as? HMEventTrigger {
+                for event in eventTrigger.events {
+                    if let charEvent = event as? HMCharacteristicEvent<NSCopying> {
+                        try? await charEvent.characteristic.enableNotification(false)
+                    }
+                }
+            }
+            // Eliminar el trigger
             do {
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                     home.removeTrigger(trigger) { error in
@@ -506,6 +538,15 @@ class HomeKitService: NSObject, ObservableObject {
                                     }
                                     continuation.resume()
                                 }
+                            }
+                        }
+                    }
+
+                    // CLEANUP: Disable notifications for the characteristic to release bridge resources
+                    if let eventTrigger = trigger as? HMEventTrigger {
+                        for event in eventTrigger.events {
+                            if let charEvent = event as? HMCharacteristicEvent<NSCopying> {
+                                try? await charEvent.characteristic.enableNotification(false)
                             }
                         }
                     }

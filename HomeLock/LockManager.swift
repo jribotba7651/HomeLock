@@ -136,6 +136,12 @@ class LockManager: ObservableObject {
         lockedState: Bool,
         duration: TimeInterval?
     ) {
+        // Enforce device limit for free users
+        guard canAddLock || isLocked(accessoryID) else {
+            print("🚫 [LockManager] Device limit reached for free tier")
+            return
+        }
+
         let expiresAt = duration.map { Date().addingTimeInterval($0) }
 
         let config = LockConfiguration(
@@ -210,6 +216,14 @@ class LockManager: ObservableObject {
     func isLocked(_ accessoryID: UUID) -> Bool {
         guard let config = locks[accessoryID] else { return false }
         return !config.isExpired
+    }
+
+    /// Indica si el usuario puede agregar más locks basándose en su suscripción
+    var canAddLock: Bool {
+        if StoreManager.shared.isPro {
+            return true
+        }
+        return locks.count < 2
     }
 
     /// Obtiene la configuración de lock para un accesorio
