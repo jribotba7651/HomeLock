@@ -11,8 +11,17 @@ import SwiftData
 struct ScheduleListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \LockSchedule.createdAt, order: .reverse) private var schedules: [LockSchedule]
+    @ObservedObject private var storeManager = StoreManager.shared
 
     @State private var showingAddSchedule = false
+    @State private var showingProRequired = false
+
+    // Free users can have 1 schedule, Pro users get unlimited
+    private let freeScheduleLimit = 1
+
+    private var canAddMoreSchedules: Bool {
+        storeManager.isPro || schedules.count < freeScheduleLimit
+    }
 
     var body: some View {
         NavigationStack {
@@ -25,6 +34,31 @@ struct ScheduleListView: View {
                     )
                 } else {
                     List {
+                        // Show upgrade banner if at limit
+                        if !storeManager.isPro && schedules.count >= freeScheduleLimit {
+                            Section {
+                                HStack {
+                                    Image(systemName: "crown.fill")
+                                        .foregroundStyle(.yellow)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Upgrade to Pro")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                        Text("Create unlimited schedules")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    showingProRequired = true
+                                }
+                            }
+                        }
+
                         ForEach(schedules) { schedule in
                             ScheduleRow(schedule: schedule)
                         }
@@ -37,7 +71,11 @@ struct ScheduleListView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        showingAddSchedule = true
+                        if canAddMoreSchedules {
+                            showingAddSchedule = true
+                        } else {
+                            showingProRequired = true
+                        }
                     } label: {
                         Image(systemName: "plus")
                     }
@@ -45,6 +83,14 @@ struct ScheduleListView: View {
             }
             .sheet(isPresented: $showingAddSchedule) {
                 AddScheduleView()
+            }
+            .alert("Pro Required", isPresented: $showingProRequired) {
+                Button("Maybe Later", role: .cancel) { }
+                Button("View Pro") {
+                    // Navigate to settings - this will be handled by the parent
+                }
+            } message: {
+                Text("Upgrade to HomeLock Pro to create unlimited schedules. Free users can have \(freeScheduleLimit) schedule.")
             }
         }
     }

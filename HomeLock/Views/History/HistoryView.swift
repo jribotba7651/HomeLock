@@ -11,9 +11,14 @@ import SwiftData
 struct HistoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \LockEvent.timestamp, order: .reverse) private var events: [LockEvent]
+    @ObservedObject private var storeManager = StoreManager.shared
 
     @State private var selectedFilter: HistoryFilter = .all
     @State private var selectedDevice: UUID?
+    @State private var showingProRequired = false
+
+    // Free users only see last 7 days
+    private let freeHistoryDays = 7
 
     enum HistoryFilter: String, CaseIterable {
         case all = "All"
@@ -23,6 +28,12 @@ struct HistoryView: View {
 
     var filteredEvents: [LockEvent] {
         var result = events
+
+        // Free users are limited to last 7 days
+        if !storeManager.isPro {
+            let cutoffDate = Calendar.current.date(byAdding: .day, value: -freeHistoryDays, to: Date())!
+            result = result.filter { $0.timestamp >= cutoffDate }
+        }
 
         // Filtrar por tiempo
         switch selectedFilter {
@@ -42,6 +53,13 @@ struct HistoryView: View {
         }
 
         return result
+    }
+
+    // Check if there are older events that would be visible with Pro
+    private var hasOlderEvents: Bool {
+        guard !storeManager.isPro else { return false }
+        let cutoffDate = Calendar.current.date(byAdding: .day, value: -freeHistoryDays, to: Date())!
+        return events.contains { $0.timestamp < cutoffDate }
     }
 
     var body: some View {
@@ -64,6 +82,44 @@ struct HistoryView: View {
                     )
                 } else {
                     List {
+                        // Show upgrade banner for free users with older history
+                        if hasOlderEvents {
+                            Section {
+                                HStack {
+                                    Image(systemName: "crown.fill")
+                                        .foregroundStyle(.yellow)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Upgrade to Pro")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                        Text("Access complete history")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    showingProRequired = true
+                                }
+                            }
+                        }
+
+                        // Show history limit notice for free users
+                        if !storeManager.isPro {
+                            Section {
+                                HStack {
+                                    Image(systemName: "info.circle")
+                                        .foregroundStyle(.secondary)
+                                    Text("Showing last \(freeHistoryDays) days")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+
                         ForEach(groupedByDate, id: \.0) { date, events in
                             Section(header: Text(date, style: .date)) {
                                 ForEach(events) { event in
@@ -90,6 +146,11 @@ struct HistoryView: View {
                         }
                     }
                 }
+            }
+            .alert("Pro Required", isPresented: $showingProRequired) {
+                Button("Maybe Later", role: .cancel) { }
+            } message: {
+                Text("Upgrade to HomeLock Pro to access your complete lock/unlock history. Free users can see the last \(freeHistoryDays) days.")
             }
         }
     }

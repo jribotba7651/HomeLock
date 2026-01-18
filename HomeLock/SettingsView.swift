@@ -11,6 +11,7 @@ struct SettingsView: View {
     @StateObject private var homeKit = HomeKitService()
     @ObservedObject private var lockManager = LockManager.shared
     @ObservedObject private var notificationManager = NotificationManager.shared
+    @ObservedObject private var storeManager = StoreManager.shared
 
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0 // 0=System, 1=Light, 2=Dark
     @AppStorage("notificationsEnabled") private var notificationsEnabled: Bool = true
@@ -19,6 +20,10 @@ struct SettingsView: View {
     @State private var isCleaningUp = false
     @State private var cleanupResult: Int?
     @State private var activeTriggerCount = 0
+    @State private var isPurchasing = false
+    @State private var isRestoring = false
+    @State private var showPurchaseError = false
+    @State private var purchaseErrorMessage = ""
 
     private var currentLanguage: String {
         let locale = Locale.current
@@ -34,6 +39,103 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             List {
+                // MARK: - Premium Section
+                Section {
+                    if storeManager.isPro {
+                        // Pro user status
+                        HStack {
+                            Image(systemName: "crown.fill")
+                                .foregroundStyle(.yellow)
+                                .font(.title2)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("HomeLock Pro")
+                                    .font(.headline)
+                                Text("All features unlocked")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "checkmark.seal.fill")
+                                .foregroundStyle(.green)
+                                .font(.title2)
+                        }
+                        .padding(.vertical, 8)
+                    } else {
+                        // Upgrade prompt
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Image(systemName: "crown.fill")
+                                    .foregroundStyle(.yellow)
+                                    .font(.title2)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Upgrade to Pro")
+                                        .font(.headline)
+                                    Text("Unlock all premium features")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            // Features list
+                            VStack(alignment: .leading, spacing: 8) {
+                                PremiumFeatureRow(icon: "calendar.badge.clock", title: "Unlimited Schedules", description: "Create unlimited auto-lock schedules")
+                                PremiumFeatureRow(icon: "clock.arrow.circlepath", title: "Full History", description: "Access complete lock/unlock history")
+                                PremiumFeatureRow(icon: "person.2.fill", title: "Multi-User Sync", description: "Sync with all home members")
+                                PremiumFeatureRow(icon: "bell.badge.fill", title: "Priority Notifications", description: "Get instant tamper alerts")
+                            }
+                            .padding(.vertical, 4)
+
+                            // Purchase button
+                            Button {
+                                Task {
+                                    await purchasePro()
+                                }
+                            } label: {
+                                HStack {
+                                    if isPurchasing {
+                                        ProgressView()
+                                            .tint(.white)
+                                    } else {
+                                        Text(priceText)
+                                            .fontWeight(.semibold)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Color.blue)
+                                .foregroundStyle(.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                            }
+                            .disabled(isPurchasing || storeManager.products.isEmpty)
+
+                            // Restore button
+                            Button {
+                                Task {
+                                    await restorePurchases()
+                                }
+                            } label: {
+                                HStack {
+                                    if isRestoring {
+                                        ProgressView()
+                                            .scaleEffect(0.8)
+                                    }
+                                    Text("Restore Purchases")
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                            .disabled(isRestoring)
+                            .font(.subheadline)
+                        }
+                        .padding(.vertical, 8)
+                    }
+                } header: {
+                    Text("Premium")
+                } footer: {
+                    if !storeManager.isPro {
+                        Text("One-time purchase. No subscription required.")
+                    }
+                }
+
                 // MARK: - Appearance Section
                 Section {
                     HStack {
@@ -200,6 +302,14 @@ struct SettingsView: View {
                     Text("Removed \(count) HomeLock automation(s).")
                 }
             }
+            .alert(
+                "Purchase Error",
+                isPresented: $showPurchaseError
+            ) {
+                Button("OK") { }
+            } message: {
+                Text(purchaseErrorMessage)
+            }
         }
         .navigationViewStyle(StackNavigationViewStyle())
     }
@@ -240,6 +350,59 @@ struct SettingsView: View {
         // Open support URL or email
         if let url = URL(string: "mailto:support@jibaroenaluna.com?subject=HomeLock%20Support") {
             UIApplication.shared.open(url)
+        }
+    }
+
+    // MARK: - Premium Functions
+
+    private var priceText: String {
+        if let product = storeManager.products.first {
+            return "Upgrade for \(product.displayPrice)"
+        }
+        return "Upgrade to Pro"
+    }
+
+    private func purchasePro() async {
+        isPurchasing = true
+        defer { isPurchasing = false }
+
+        do {
+            try await storeManager.purchase()
+        } catch {
+            purchaseErrorMessage = error.localizedDescription
+            showPurchaseError = true
+        }
+    }
+
+    private func restorePurchases() async {
+        isRestoring = true
+        defer { isRestoring = false }
+
+        await storeManager.restorePurchases()
+    }
+}
+
+// MARK: - Premium Feature Row
+
+struct PremiumFeatureRow: View {
+    let icon: String
+    let title: String
+    let description: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundStyle(.blue)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
