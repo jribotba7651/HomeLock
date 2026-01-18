@@ -8,10 +8,12 @@
 import SwiftUI
 import BackgroundTasks
 import UserNotifications
+import CloudKit
 
 @main
 struct HomeLockApp: App {
     @AppStorage("appearanceMode") var appearanceMode: Int = 0
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     init() {
         registerBackgroundTasks()
@@ -23,7 +25,7 @@ struct HomeLockApp: App {
         WindowGroup {
             SplashContainer {
                 AuthenticationView {
-                    ContentView()
+                    MainTabView()
                 }
             }
             .preferredColorScheme(
@@ -115,5 +117,37 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.alert, .sound, .badge])
+    }
+}
+
+// MARK: - App Delegate for CloudKit Push Notifications
+
+class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Register for remote notifications (required for CloudKit subscriptions)
+        application.registerForRemoteNotifications()
+        return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        print("📬 [AppDelegate] Registered for remote notifications")
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("❌ [AppDelegate] Failed to register for remote notifications: \(error)")
+    }
+
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        // Check if this is a CloudKit notification
+        if let notification = CKNotification(fromRemoteNotificationDictionary: userInfo as! [String: NSObject]) {
+            print("📬 [AppDelegate] Received CloudKit notification: \(notification.subscriptionID ?? "unknown")")
+
+            Task {
+                await FamilyPermissionService.shared.handleRemoteNotification(userInfo)
+                completionHandler(.newData)
+            }
+        } else {
+            completionHandler(.noData)
+        }
     }
 }

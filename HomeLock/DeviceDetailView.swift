@@ -13,6 +13,7 @@ struct DeviceDetailView: View {
     let accessory: HMAccessory
     @ObservedObject var homeKit: HomeKitService
     @ObservedObject var lockManager = LockManager.shared
+    @ObservedObject var familyService: FamilyPermissionService
 
     @State private var isOn: Bool = false
     @State private var isLoading: Bool = true
@@ -22,12 +23,21 @@ struct DeviceDetailView: View {
     @State private var errorMessage: String?
     @State private var showingError: Bool = false
 
-    // New duration picker state
+    // Duration picker state
     @State private var untilUnlock: Bool = false
     @State private var selectedHours: Int = 0
     @State private var selectedMinutes: Int = 30
 
+    // Family sharing state
+    @State private var shareWithFamily: Bool = true
+
     @Environment(\.dismiss) private var dismiss
+
+    init(accessory: HMAccessory, homeKit: HomeKitService, familyService: FamilyPermissionService = FamilyPermissionService.shared) {
+        self.accessory = accessory
+        self.homeKit = homeKit
+        self.familyService = familyService
+    }
 
     private var lockConfig: LockConfiguration? {
         lockManager.getLock(for: accessory.uniqueIdentifier)
@@ -111,6 +121,8 @@ struct DeviceDetailView: View {
                     LockedStatusView(
                         lockToState: config.lockedState,
                         lockEndTime: config.expiresAt,
+                        createdByName: config.createdByName,
+                        isShared: config.isShared,
                         onUnlock: {
                             Task {
                                 await unlockDevice()
@@ -166,6 +178,18 @@ struct DeviceDetailView: View {
                                 .frame(maxWidth: .infinity)
                             }
                         }
+                    }
+
+                    // Family sharing toggle
+                    if familyService.isCloudKitAvailable && familyService.currentUser != nil {
+                        Toggle(isOn: $shareWithFamily) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "person.2.fill")
+                                    .foregroundStyle(.blue)
+                                Text(String(localized: "Share with Family"))
+                            }
+                        }
+                        .toggleStyle(SwitchToggleStyle(tint: .blue))
                     }
 
                     // Lock button
@@ -287,17 +311,23 @@ struct DeviceDetailView: View {
                 lockedState: lockToState
             )
 
+            // Get home ID for family sharing
+            let homeID = homeKit.getHome(for: accessory)?.uniqueIdentifier.uuidString
+
             await MainActor.run {
                 lockManager.addLock(
                     accessoryID: accessory.uniqueIdentifier,
                     accessoryName: accessory.name,
+                    roomName: accessory.room?.name,
                     triggerID: triggerID,
                     lockedState: lockToState,
-                    duration: selectedDuration
+                    duration: selectedDuration,
+                    shareWithFamily: shareWithFamily && familyService.isCloudKitAvailable,
+                    homeID: homeID
                 )
             }
 
-            print("DeviceDetailView: Lock activated successfully")
+            print("DeviceDetailView: Lock activated successfully (shared: \(shareWithFamily))")
 
         } catch {
             await MainActor.run {
@@ -318,11 +348,21 @@ struct DeviceDetailView: View {
 struct LockedStatusView: View {
     let lockToState: Bool
     let lockEndTime: Date?
+    let createdByName: String?
+    let isShared: Bool
     let onUnlock: () -> Void
 
     @State private var timeRemaining: String = ""
     @State private var timer: Timer?
     @State private var isUnlocking: Bool = false
+
+    init(lockToState: Bool, lockEndTime: Date?, createdByName: String? = nil, isShared: Bool = false, onUnlock: @escaping () -> Void) {
+        self.lockToState = lockToState
+        self.lockEndTime = lockEndTime
+        self.createdByName = createdByName
+        self.isShared = isShared
+        self.onUnlock = onUnlock
+    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -331,15 +371,36 @@ struct LockedStatusView: View {
                     .font(.title)
                     .foregroundStyle(.orange)
 
-                VStack(alignment: .leading) {
-                    Text(String(localized: "Device locked"))
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(String(localized: "Device locked"))
+                            .font(.headline)
+
+                        if isShared {
+                            Image(systemName: "person.2.fill")
+                                .font(.caption)
+                                .foregroundStyle(.blue)
+                        }
+                    }
                     Text(String(localized: "Keeping \(lockToState ? "on" : "off")"))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
+            }
+
+            // Show who locked the device
+            if let createdBy = createdByName {
+                HStack {
+                    Image(systemName: "person.fill")
+                    Text(String(localized: "Locked by"))
+                    Spacer()
+                    Text(createdBy)
+                        .fontWeight(.medium)
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
             }
 
             if lockEndTime != nil {

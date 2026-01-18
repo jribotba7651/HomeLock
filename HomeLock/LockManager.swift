@@ -15,10 +15,14 @@ struct LockConfiguration: Codable, Identifiable {
     let id: UUID
     let accessoryID: UUID
     let accessoryName: String
+    let roomName: String?
     let triggerID: UUID
     let lockedState: Bool
     let createdAt: Date
     let expiresAt: Date? // nil = indefinido
+    let createdByID: String? // Family member ID (nil = local lock)
+    let createdByName: String? // Family member name
+    let sharedLockID: String? // CloudKit record ID for sync
 
     var isExpired: Bool {
         guard let expiresAt else { return false }
@@ -30,6 +34,35 @@ struct LockConfiguration: Codable, Identifiable {
         let remaining = expiresAt.timeIntervalSinceNow
         return remaining > 0 ? remaining : 0
     }
+
+    var isShared: Bool {
+        sharedLockID != nil
+    }
+
+    // Backwards compatibility initializer
+    init(id: UUID = UUID(),
+         accessoryID: UUID,
+         accessoryName: String,
+         roomName: String? = nil,
+         triggerID: UUID,
+         lockedState: Bool,
+         createdAt: Date = Date(),
+         expiresAt: Date? = nil,
+         createdByID: String? = nil,
+         createdByName: String? = nil,
+         sharedLockID: String? = nil) {
+        self.id = id
+        self.accessoryID = accessoryID
+        self.accessoryName = accessoryName
+        self.roomName = roomName
+        self.triggerID = triggerID
+        self.lockedState = lockedState
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+        self.createdByID = createdByID
+        self.createdByName = createdByName
+        self.sharedLockID = sharedLockID
+    }
 }
 
 /// Maneja la persistencia de locks usando UserDefaults
@@ -38,10 +71,13 @@ class LockManager: ObservableObject {
     static let shared = LockManager()
 
     @Published private(set) var locks: [UUID: LockConfiguration] = [:] // accessoryID -> config
+    @Published private(set) var isFamilySyncEnabled = false
 
     private let userDefaultsKey = "HomeLock_ActiveLocks"
     private var expirationTimers: [UUID: Timer] = [:]
     private var homeKitService: HomeKitService?
+    private var familyService: FamilyPermissionService?
+    private var cancellables = Set<AnyCancellable>()
 
     // Background Task Management
     nonisolated static let backgroundTaskIdentifier = "com.jibaroenaluna.homelock.expireLock"
@@ -126,26 +162,183 @@ class LockManager: ObservableObject {
         }
     }
 
+    /// Configura la sincronización con Family Service
+    func configureFamily(with familyService: FamilyPermissionService) {
+        guard self.familyService !== familyService else { return }
+
+        self.familyService = familyService
+        isFamilySyncEnabled = familyService.isCloudKitAvailable
+
+        // Observar cambios en shared locks
+        familyService.$sharedLocks
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] sharedLocks in
+                Task { @MainActor in
+                    await self?.syncFromSharedLocks(sharedLocks)
+                }
+            }
+            .store(in: &cancellables)
+
+        familyService.$isCloudKitAvailable
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isAvailable in
+                self?.isFamilySyncEnabled = isAvailable
+            }
+            .store(in: &cancellables)
+
+        print("👨‍👩‍👧‍👦 [LockManager] Family sync configured")
+    }
+
+    /// Sincroniza locks locales desde shared locks de CloudKit
+    private func syncFromSharedLocks(_ sharedLocks: [SharedLock]) async {
+        guard let homeKit = homeKitService else { return }
+
+        print("🔄 [LockManager] Syncing from \(sharedLocks.count) shared locks")
+
+        // Obtener IDs de locks compartidos activos
+        let sharedAccessoryIDs = Set(sharedLocks.map { $0.accessoryID })
+
+        // Verificar locks locales que ya no están compartidos
+        for (accessoryID, config) in locks {
+            if config.isShared, !sharedAccessoryIDs.contains(accessoryID) {
+                print("🔓 [LockManager] Removing lock no longer shared: \(config.accessoryName)")
+                await removeLock(for: accessoryID)
+            }
+        }
+
+        // Agregar o actualizar locks compartidos
+        for sharedLock in sharedLocks where !sharedLock.isExpired {
+            if let existingLock = locks[sharedLock.accessoryID] {
+                // Ya existe, verificar si necesita actualización
+                if existingLock.sharedLockID != sharedLock.id {
+                    print("🔄 [LockManager] Updating lock from shared: \(sharedLock.accessoryName)")
+                    // Remover el viejo y crear nuevo
+                    await removeLock(for: sharedLock.accessoryID)
+                    await createLockFromShared(sharedLock)
+                }
+            } else {
+                // No existe localmente, crear desde shared
+                print("➕ [LockManager] Creating local lock from shared: \(sharedLock.accessoryName)")
+                await createLockFromShared(sharedLock)
+            }
+        }
+    }
+
+    /// Crea un lock local desde un SharedLock de CloudKit
+    private func createLockFromShared(_ sharedLock: SharedLock) async {
+        guard let homeKit = homeKitService,
+              let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == sharedLock.accessoryID }) else {
+            print("⚠️ [LockManager] Accessory not found for shared lock: \(sharedLock.accessoryName)")
+            return
+        }
+
+        do {
+            // Establecer el estado bloqueado
+            try await homeKit.setAccessoryPower(accessory, on: sharedLock.lockedState)
+
+            // Crear trigger de HomeKit
+            let triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: sharedLock.lockedState)
+
+            // Crear configuración local
+            let config = LockConfiguration(
+                id: UUID(),
+                accessoryID: sharedLock.accessoryID,
+                accessoryName: sharedLock.accessoryName,
+                roomName: sharedLock.roomName,
+                triggerID: triggerID,
+                lockedState: sharedLock.lockedState,
+                createdAt: sharedLock.createdAt,
+                expiresAt: sharedLock.expiresAt,
+                createdByID: sharedLock.createdByID,
+                createdByName: sharedLock.createdByName,
+                sharedLockID: sharedLock.id
+            )
+
+            locks[sharedLock.accessoryID] = config
+            saveLocks()
+
+            // Programar expiración si tiene tiempo límite
+            if let expiresAt = sharedLock.expiresAt {
+                scheduleExpiration(for: sharedLock.accessoryID, at: expiresAt)
+            }
+
+            startPolling()
+
+            print("✅ [LockManager] Lock created from shared: \(sharedLock.accessoryName)")
+        } catch {
+            print("❌ [LockManager] Error creating lock from shared: \(error)")
+        }
+    }
+
     // MARK: - Public API
 
     /// Agrega un nuevo lock
     func addLock(
         accessoryID: UUID,
         accessoryName: String,
+        roomName: String? = nil,
         triggerID: UUID,
         lockedState: Bool,
-        duration: TimeInterval?
+        duration: TimeInterval?,
+        shareWithFamily: Bool = false,
+        homeID: String? = nil
     ) {
         let expiresAt = duration.map { Date().addingTimeInterval($0) }
+
+        // Obtener info del usuario actual si está disponible
+        let createdByID = familyService?.currentUser?.id
+        let createdByName = familyService?.currentUser?.name
+
+        var sharedLockID: String? = nil
+
+        // Sincronizar con familia si está habilitado
+        if shareWithFamily, let familyService = familyService, let homeID = homeID {
+            Task {
+                if let sharedLock = await familyService.createSharedLock(
+                    accessoryID: accessoryID,
+                    accessoryName: accessoryName,
+                    roomName: roomName,
+                    lockedState: lockedState,
+                    expiresAt: expiresAt,
+                    homeID: homeID
+                ) {
+                    // Actualizar el lock local con el ID compartido
+                    await MainActor.run {
+                        if var existingConfig = self.locks[accessoryID] {
+                            let updatedConfig = LockConfiguration(
+                                id: existingConfig.id,
+                                accessoryID: existingConfig.accessoryID,
+                                accessoryName: existingConfig.accessoryName,
+                                roomName: existingConfig.roomName,
+                                triggerID: existingConfig.triggerID,
+                                lockedState: existingConfig.lockedState,
+                                createdAt: existingConfig.createdAt,
+                                expiresAt: existingConfig.expiresAt,
+                                createdByID: existingConfig.createdByID,
+                                createdByName: existingConfig.createdByName,
+                                sharedLockID: sharedLock.id
+                            )
+                            self.locks[accessoryID] = updatedConfig
+                            self.saveLocks()
+                        }
+                    }
+                    print("👨‍👩‍👧‍👦 [LockManager] Lock shared with family: \(accessoryName)")
+                }
+            }
+        }
 
         let config = LockConfiguration(
             id: UUID(),
             accessoryID: accessoryID,
             accessoryName: accessoryName,
+            roomName: roomName,
             triggerID: triggerID,
             lockedState: lockedState,
             createdAt: Date(),
-            expiresAt: expiresAt
+            expiresAt: expiresAt,
+            createdByID: createdByID,
+            createdByName: createdByName,
+            sharedLockID: sharedLockID
         )
 
         locks[accessoryID] = config
@@ -169,11 +362,11 @@ class LockManager: ObservableObject {
         // Iniciar polling
         startPolling()
 
-        print("🔒 [LockManager] Lock agregado para \(accessoryName), expira: \(expiresAt?.description ?? "nunca")")
+        print("🔒 [LockManager] Lock agregado para \(accessoryName), expira: \(expiresAt?.description ?? "nunca"), compartido: \(shareWithFamily)")
     }
 
     /// Elimina un lock
-    func removeLock(for accessoryID: UUID) async {
+    func removeLock(for accessoryID: UUID, removeFromCloud: Bool = true) async {
         guard let config = locks[accessoryID] else { return }
 
         // Cancelar timer de expiración, background task y notificación
@@ -184,6 +377,13 @@ class LockManager: ObservableObject {
         // Cancelar notificación local
         Task {
             await NotificationManager.shared.cancelLockExpirationNotification(accessoryID: accessoryID)
+        }
+
+        // Eliminar de CloudKit si es un lock compartido
+        if removeFromCloud, let sharedLockID = config.sharedLockID, let familyService = familyService {
+            Task {
+                _ = await familyService.removeSharedLock(lockID: sharedLockID)
+            }
         }
 
         // Eliminar trigger de HomeKit (best effort, polling is the real enforcement)
