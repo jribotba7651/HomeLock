@@ -11,6 +11,7 @@ struct SettingsView: View {
     @StateObject private var homeKit = HomeKitService()
     @ObservedObject private var lockManager = LockManager.shared
     @ObservedObject private var notificationManager = NotificationManager.shared
+    @ObservedObject private var store = StoreManager.shared
 
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0 // 0=System, 1=Light, 2=Dark
     @AppStorage("notificationsEnabled") private var notificationsEnabled: Bool = true
@@ -19,6 +20,7 @@ struct SettingsView: View {
     @State private var isCleaningUp = false
     @State private var cleanupResult: Int?
     @State private var activeTriggerCount = 0
+    @State private var showingPaywall = false
 
     private var currentLanguage: String {
         let locale = Locale.current
@@ -84,6 +86,66 @@ struct SettingsView: View {
                     Text("Security")
                 } footer: {
                     Text("Configure PIN and biometric authentication.")
+                }
+
+                // MARK: - Plan Section
+                Section {
+                    if store.isPro {
+                        HStack {
+                            Label("HomeLock Pro", systemImage: "checkmark.seal.fill")
+                                .foregroundStyle(.orange)
+                            Spacer()
+                            Text("Active")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.green.opacity(0.15))
+                                .clipShape(Capsule())
+                        }
+                    } else {
+                        HStack {
+                            Label("Free Plan", systemImage: "sparkles")
+                            Spacer()
+                            Text("\(lockManager.activeLockCount)/\(StoreManager.freeDeviceLimit) devices")
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Button {
+                            showingPaywall = true
+                        } label: {
+                            HStack {
+                                Label("Upgrade to Pro", systemImage: "crown.fill")
+                                    .foregroundStyle(.orange)
+                                Spacer()
+                                if let product = store.products.first {
+                                    Text(product.displayPrice)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    Button {
+                        Task {
+                            await store.restore()
+                        }
+                    } label: {
+                        Label("Restore Purchase", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(store.isLoading)
+                } header: {
+                    Text("Plan")
+                } footer: {
+                    if store.isPro {
+                        Text("Thank you for supporting HomeLock!")
+                    } else {
+                        Text("Upgrade to Pro for unlimited devices.")
+                    }
                 }
 
                 // MARK: - Notifications Section
@@ -199,6 +261,9 @@ struct SettingsView: View {
                 if let count = cleanupResult {
                     Text("Removed \(count) HomeLock automation(s).")
                 }
+            }
+            .sheet(isPresented: $showingPaywall) {
+                PaywallView()
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())

@@ -218,6 +218,24 @@ class LockManager: ObservableObject {
         return config
     }
 
+    // MARK: - Device Limit
+
+    /// Returns the count of currently active (non-expired) locks
+    var activeLockCount: Int {
+        locks.values.filter { !$0.isExpired }.count
+    }
+
+    /// Checks if the user can lock more devices based on their plan
+    /// Free users are limited to 2 devices, Pro users have unlimited
+    func canLockMoreDevices() -> Bool {
+        return StoreManager.shared.canLockMoreDevices(currentLockCount: activeLockCount)
+    }
+
+    /// Returns the number of remaining free device slots (nil for Pro users = unlimited)
+    func remainingDeviceSlots() -> Int? {
+        return StoreManager.shared.remainingFreeSlots(currentLockCount: activeLockCount)
+    }
+
     // MARK: - Polling Enforcement
 
     private func startPolling() {

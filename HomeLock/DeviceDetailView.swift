@@ -13,6 +13,7 @@ struct DeviceDetailView: View {
     let accessory: HMAccessory
     @ObservedObject var homeKit: HomeKitService
     @ObservedObject var lockManager = LockManager.shared
+    @ObservedObject private var store = StoreManager.shared
 
     @State private var isOn: Bool = false
     @State private var isLoading: Bool = true
@@ -21,6 +22,7 @@ struct DeviceDetailView: View {
     @State private var showingLockConfirmation: Bool = false
     @State private var errorMessage: String?
     @State private var showingError: Bool = false
+    @State private var showingPaywall: Bool = false
 
     // New duration picker state
     @State private var untilUnlock: Bool = false
@@ -70,6 +72,11 @@ struct DeviceDetailView: View {
         }
     }
 
+    /// Whether the free device limit has been reached (and user is not Pro)
+    private var isDeviceLimitReached: Bool {
+        !store.isPro && !lockManager.canLockMoreDevices()
+    }
+
     var body: some View {
         List {
             // MARK: - Device Info Section
@@ -117,6 +124,11 @@ struct DeviceDetailView: View {
                             }
                         }
                     )
+                } else if isDeviceLimitReached {
+                    // Show upgrade banner when limit reached
+                    DeviceLimitBanner(showPaywall: $showingPaywall)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                        .listRowBackground(Color.clear)
                 } else {
                     // Lock state selector
                     Picker(String(localized: "Lock to"), selection: $lockToState) {
@@ -204,10 +216,18 @@ struct DeviceDetailView: View {
                     if isLocked {
                         Image(systemName: "lock.fill")
                             .foregroundStyle(.orange)
+                    } else if !store.isPro {
+                        // Show remaining slots for free users
+                        Spacer()
+                        if let remaining = lockManager.remainingDeviceSlots() {
+                            Text(String(localized: "\(remaining) of \(StoreManager.freeDeviceLimit) free"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             } footer: {
-                if !isLocked {
+                if !isLocked && !isDeviceLimitReached {
                     Text(String(localized: "When locked, the device will stay in the selected state. Any attempt to change it will be automatically reverted by HomeKit."))
                 }
             }
@@ -235,6 +255,9 @@ struct DeviceDetailView: View {
             Button("OK") { }
         } message: {
             Text(errorMessage ?? String(localized: "Unknown error"))
+        }
+        .sheet(isPresented: $showingPaywall) {
+            PaywallView()
         }
     }
 
