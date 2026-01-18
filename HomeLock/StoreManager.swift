@@ -5,6 +5,7 @@
 
 import SwiftUI
 import StoreKit
+import Combine
 
 // Use type alias to avoid ambiguity with SwiftUI.Transaction
 typealias StoreTransaction = StoreKit.Transaction
