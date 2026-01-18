@@ -7,10 +7,10 @@ import SwiftUI
 
 struct PaywallContainer<Content: View>: View {
     @AppStorage("appLaunchCount") private var appLaunchCount: Int = 0
-    @AppStorage("hasSeenPaywall") private var hasSeenPaywall: Bool = false
     @ObservedObject private var storeManager = StoreManager.shared
 
     @State private var showPaywall = false
+    @State private var hasChecked = false
 
     let content: () -> Content
 
@@ -23,33 +23,35 @@ struct PaywallContainer<Content: View>: View {
             .fullScreenCover(isPresented: $showPaywall) {
                 PaywallView(isPresented: $showPaywall)
             }
-            .onAppear {
-                checkAndShowPaywall()
+            .task {
+                guard !hasChecked else { return }
+                hasChecked = true
+                await checkAndShowPaywall()
             }
     }
 
-    private func checkAndShowPaywall() {
+    private func checkAndShowPaywall() async {
+        // Small delay to let UI settle
+        try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
+
         // Don't show paywall if user is already Pro
-        guard !storeManager.isPro else { return }
-
-        // Increment launch count
-        appLaunchCount += 1
-
-        // Show paywall on first launch
-        if !hasSeenPaywall {
-            hasSeenPaywall = true
-            // Small delay to let the app load
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                showPaywall = true
-            }
+        guard !storeManager.isPro else {
+            print("💰 [Paywall] User is Pro, skipping paywall")
             return
         }
 
-        // Show paywall every 5 launches for free users
-        if appLaunchCount % 5 == 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        // Increment launch count
+        appLaunchCount += 1
+        print("💰 [Paywall] Launch count: \(appLaunchCount)")
+
+        // Show paywall on first launch OR every 5 launches
+        if appLaunchCount == 1 || appLaunchCount % 5 == 0 {
+            print("💰 [Paywall] Showing paywall (launch #\(appLaunchCount))")
+            await MainActor.run {
                 showPaywall = true
             }
+        } else {
+            print("💰 [Paywall] Not showing paywall this time")
         }
     }
 }
