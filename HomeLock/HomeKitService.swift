@@ -565,6 +565,69 @@ class HomeKitService: NSObject, ObservableObject {
         }
         return count
     }
+
+    // MARK: - Multi-User Sync Support
+
+    /// Estructura para representar un lock detectado desde HomeKit
+    struct DetectedLock {
+        let accessoryUUID: UUID
+        let accessoryName: String
+        let triggerUUID: UUID
+        let lockedState: Bool
+        let isEnabled: Bool
+    }
+
+    /// Obtiene todos los triggers de HomeLock activos desde HomeKit
+    /// Esto permite sincronizar con locks creados por otros miembros del hogar
+    func getAllActiveLockTriggers() -> [DetectedLock] {
+        var detectedLocks: [DetectedLock] = []
+
+        for home in homes {
+            let homeLockTriggers = home.triggers.filter {
+                $0.name.hasPrefix("HomeLock_") && $0.isEnabled
+            }
+
+            for trigger in homeLockTriggers {
+                guard let eventTrigger = trigger as? HMEventTrigger else { continue }
+
+                // Extraer el UUID del accesorio del nombre del trigger
+                // Formato: HomeLock_{accessoryUUID}
+                let triggerName = trigger.name
+                let uuidString = triggerName.replacingOccurrences(of: "HomeLock_", with: "")
+                guard let accessoryUUID = UUID(uuidString: uuidString) else { continue }
+
+                // Buscar el accesorio
+                guard let accessory = home.accessories.first(where: { $0.uniqueIdentifier == accessoryUUID }) else { continue }
+
+                // Determinar el estado bloqueado desde el evento del trigger
+                var lockedState = true
+                if let characteristicEvent = eventTrigger.events.first as? HMCharacteristicEvent<NSCopying> {
+                    // El trigger se dispara cuando el estado cambia al valor NO deseado
+                    // Por lo tanto, el estado bloqueado es el opuesto
+                    if let triggerValue = characteristicEvent.triggerValue as? Bool {
+                        lockedState = !triggerValue
+                    }
+                }
+
+                let detected = DetectedLock(
+                    accessoryUUID: accessoryUUID,
+                    accessoryName: accessory.name,
+                    triggerUUID: trigger.uniqueIdentifier,
+                    lockedState: lockedState,
+                    isEnabled: trigger.isEnabled
+                )
+
+                detectedLocks.append(detected)
+                print("🔍 [HomeKit Sync] Trigger detectado: \(accessory.name) -> \(lockedState ? "ON" : "OFF")")
+            }
+        }
+
+        print("🔍 [HomeKit Sync] Total triggers detectados: \(detectedLocks.count)")
+        return detectedLocks
+    }
+
+    /// Publisher para notificar cambios en los homes
+    @Published var homesLastUpdated: Date = Date()
 }
 
 // MARK: - HMHomeManagerDelegate
@@ -613,6 +676,9 @@ extension HomeKitService: HMHomeManagerDelegate {
                 }
             }
             print("🏠 [HomeKit] ==========================================")
+
+            // Notify that homes were updated (for sync)
+            self.homesLastUpdated = Date()
         }
     }
 }

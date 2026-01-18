@@ -124,4 +124,70 @@ class NotificationManager: ObservableObject {
         print("📱 [NotificationManager] Cancelled \(lockNotificationIdentifiers.count) lock expiration notifications")
     }
 
+    // MARK: - Multi-User Notifications
+
+    /// Shows an immediate notification when another home member locks/unlocks a device
+    func showExternalLockNotification(accessoryName: String, isLocked: Bool) async {
+        guard isAuthorized else {
+            print("📱 [NotificationManager] Not authorized to show notifications")
+            return
+        }
+
+        let identifier = "external-lock-\(UUID().uuidString)"
+
+        let content = UNMutableNotificationContent()
+        if isLocked {
+            content.title = String(localized: "Device Locked")
+            content.body = String(localized: "\(accessoryName) was locked by another home member")
+        } else {
+            content.title = String(localized: "Device Unlocked")
+            content.body = String(localized: "\(accessoryName) was unlocked by another home member")
+        }
+        content.sound = .default
+        content.userInfo = [
+            "accessoryName": accessoryName,
+            "type": "external-lock-change",
+            "isLocked": isLocked
+        ]
+
+        // Trigger immediately (1 second delay for iOS requirement)
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+
+        do {
+            let center = UNUserNotificationCenter.current()
+            try await center.add(request)
+            print("📱 [NotificationManager] Showing external lock notification for \(accessoryName)")
+        } catch {
+            print("📱 [NotificationManager] Error showing external lock notification: \(error)")
+        }
+    }
+
+    /// Shows a tamper alert notification
+    func showTamperNotification(accessoryName: String) async {
+        guard isAuthorized else { return }
+
+        let identifier = "tamper-alert-\(UUID().uuidString)"
+
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "Tamper Alert")
+        content.body = String(localized: "Someone tried to change \(accessoryName) while it was locked")
+        content.sound = UNNotificationSound.defaultCritical
+        content.userInfo = [
+            "accessoryName": accessoryName,
+            "type": "tamper-alert"
+        ]
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+
+        do {
+            let center = UNUserNotificationCenter.current()
+            try await center.add(request)
+            print("📱 [NotificationManager] Showing tamper notification for \(accessoryName)")
+        } catch {
+            print("📱 [NotificationManager] Error showing tamper notification: \(error)")
+        }
+    }
 }

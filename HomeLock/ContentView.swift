@@ -139,8 +139,28 @@ struct DashboardView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 16) {
-                        HStack {
+                    HStack(spacing: 12) {
+                        // Sync status indicator
+                        if lockManager.isSyncing {
+                            HStack(spacing: 4) {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                Text("Syncing")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if let lastSync = lockManager.lastSyncTime {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .foregroundStyle(.green)
+                                Text(lastSync, style: .relative)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        // Device count
+                        HStack(spacing: 4) {
                             Image(systemName: homeKit.isAuthorized ? "checkmark.circle.fill" : "circle")
                                 .foregroundStyle(homeKit.isAuthorized ? .green : .secondary)
                             Text("\(homeKit.outlets.count)")
@@ -255,6 +275,18 @@ struct AccessoryRow: View {
         lockManager.isLocked(accessory.uniqueIdentifier)
     }
 
+    private var lockConfig: LockConfiguration? {
+        lockManager.getLock(for: accessory.uniqueIdentifier)
+    }
+
+    private var isExternalLock: Bool {
+        // A lock without expiration time that we didn't create is from another user
+        if let config = lockConfig {
+            return config.expiresAt == nil
+        }
+        return false
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             // Power state indicator
@@ -277,9 +309,15 @@ struct AccessoryRow: View {
 
                     // Lock indicator
                     if isLocked {
-                        Image(systemName: "lock.fill")
-                            .foregroundStyle(.orange)
-                            .font(.caption2)
+                        HStack(spacing: 2) {
+                            Image(systemName: "lock.fill")
+                                .foregroundStyle(.orange)
+                            if isExternalLock {
+                                Image(systemName: "person.2.fill")
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                        .font(.caption2)
                     }
                 }
 
