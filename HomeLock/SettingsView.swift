@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @StateObject private var homeKit = HomeKitService()
+    @ObservedObject private var homeKit = HomeKitService.shared
     @ObservedObject private var lockManager = LockManager.shared
     @ObservedObject private var notificationManager = NotificationManager.shared
 

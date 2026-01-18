@@ -9,7 +9,7 @@ import SwiftUI
 import HomeKit
 
 struct ContentView: View {
-    @StateObject private var homeKit = HomeKitService()
+    @ObservedObject private var homeKit = HomeKitService.shared
     @ObservedObject private var lockManager = LockManager.shared
 
     @State private var showingCleanupConfirmation = false

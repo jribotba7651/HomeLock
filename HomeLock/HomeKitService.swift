@@ -11,6 +11,8 @@ import Combine
 
 @MainActor
 class HomeKitService: NSObject, ObservableObject {
+    static let shared = HomeKitService()
+
     @Published var homes: [HMHome] = []
     @Published var accessories: [HMAccessory] = []
     @Published var outlets: [HMAccessory] = []
