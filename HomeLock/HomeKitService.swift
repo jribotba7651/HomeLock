@@ -713,7 +713,7 @@ extension HomeKitService: HMHomeDelegate {
     }
 
     // Called when a trigger is updated
-    nonisolated func home(_ home: HMHome, didUpdateTrigger trigger: HMTrigger) {
+    nonisolated func home(_ home: HMHome, didUpdate trigger: HMTrigger) {
         Task { @MainActor in
             print("🔔 [HomeKit] Trigger updated: \(trigger.name)")
             if trigger.name.hasPrefix("HomeLock_") {
