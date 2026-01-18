@@ -8,35 +8,6 @@
 import SwiftUI
 import HomeKit
 
-enum LockDuration: String, CaseIterable, Identifiable {
-    case fifteenMinutes = "15 min"
-    case thirtyMinutes = "30 min"
-    case oneHour = "1 hour"
-    case twoHours = "2 hours"
-    case untilUnlock = "Until I unlock"
-
-    var id: String { rawValue }
-
-    var seconds: TimeInterval? {
-        switch self {
-        case .fifteenMinutes: return 15 * 60
-        case .thirtyMinutes: return 30 * 60
-        case .oneHour: return 60 * 60
-        case .twoHours: return 2 * 60 * 60
-        case .untilUnlock: return nil
-        }
-    }
-
-    var displayName: String {
-        switch self {
-        case .fifteenMinutes: return String(localized: "15 min")
-        case .thirtyMinutes: return String(localized: "30 min")
-        case .oneHour: return String(localized: "1 hour")
-        case .twoHours: return String(localized: "2 hours")
-        case .untilUnlock: return String(localized: "Until I unlock")
-        }
-    }
-}
 
 struct DeviceDetailView: View {
     let accessory: HMAccessory
@@ -46,11 +17,15 @@ struct DeviceDetailView: View {
     @State private var isOn: Bool = false
     @State private var isLoading: Bool = true
     @State private var isLocking: Bool = false
-    @State private var selectedDuration: LockDuration = .thirtyMinutes
     @State private var lockToState: Bool = false
     @State private var showingLockConfirmation: Bool = false
     @State private var errorMessage: String?
     @State private var showingError: Bool = false
+
+    // New duration picker state
+    @State private var untilUnlock: Bool = false
+    @State private var selectedHours: Int = 0
+    @State private var selectedMinutes: Int = 30
 
     @Environment(\.dismiss) private var dismiss
 
@@ -60,6 +35,39 @@ struct DeviceDetailView: View {
 
     private var isLocked: Bool {
         lockConfig != nil
+    }
+
+    private var selectedDuration: TimeInterval? {
+        if untilUnlock {
+            return nil
+        } else {
+            return TimeInterval(selectedHours * 3600 + selectedMinutes * 60)
+        }
+    }
+
+    private var durationDisplayText: String {
+        if untilUnlock {
+            return String(localized: "Until I unlock")
+        } else if selectedHours == 0 && selectedMinutes == 0 {
+            return String(localized: "No time limit")
+        } else {
+            let hoursText = selectedHours > 0 ? "\(selectedHours) hr" : ""
+            let minutesText = selectedMinutes > 0 ? "\(selectedMinutes) min" : ""
+            return [hoursText, minutesText].filter { !$0.isEmpty }.joined(separator: " ")
+        }
+    }
+
+    private var lockButtonText: String {
+        if untilUnlock {
+            return String(localized: "Lock Device (Until I unlock)")
+        } else if selectedHours == 0 && selectedMinutes == 0 {
+            return String(localized: "Lock Device (No time limit)")
+        } else {
+            let hoursText = selectedHours > 0 ? "\(selectedHours)h" : ""
+            let minutesText = selectedMinutes > 0 ? "\(selectedMinutes)m" : ""
+            let duration = [hoursText, minutesText].filter { !$0.isEmpty }.joined(separator: " ")
+            return String(localized: "Lock Device (\(duration))")
+        }
     }
 
     var body: some View {
@@ -117,16 +125,60 @@ struct DeviceDetailView: View {
                     }
                     .pickerStyle(.segmented)
 
-                    // Duration selector
-                    Picker(String(localized: "Duration"), selection: $selectedDuration) {
-                        ForEach(LockDuration.allCases) { duration in
-                            Text(duration.displayName).tag(duration)
+                    // Duration selector - iOS Timer style
+                    VStack(alignment: .leading, spacing: 16) {
+                        // "Until I unlock" toggle
+                        Toggle(String(localized: "Until I unlock"), isOn: $untilUnlock)
+                            .toggleStyle(SwitchToggleStyle(tint: .orange))
+
+                        // Time picker (hidden when "Until I unlock" is selected)
+                        if !untilUnlock {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(String(localized: "Duration"))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+
+                                HStack(spacing: 0) {
+                                    Picker("Hours", selection: $selectedHours) {
+                                        ForEach(0..<13) { hour in
+                                            Text("\(hour)").tag(hour)
+                                        }
+                                    }
+                                    .pickerStyle(.wheel)
+                                    .frame(width: 80, height: 150)
+                                    .clipped()
+
+                                    Text("hr")
+                                        .font(.headline)
+
+                                    Picker("Minutes", selection: $selectedMinutes) {
+                                        ForEach(0..<60) { minute in
+                                            Text("\(minute)").tag(minute)
+                                        }
+                                    }
+                                    .pickerStyle(.wheel)
+                                    .frame(width: 80, height: 150)
+                                    .clipped()
+
+                                    Text("min")
+                                        .font(.headline)
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
                         }
                     }
 
                     // Lock button
                     Button {
-                        showingLockConfirmation = true
+                        // Only show confirmation for indefinite locks (until unlock)
+                        if untilUnlock {
+                            showingLockConfirmation = true
+                        } else {
+                            // Direct lock for timed locks
+                            Task {
+                                await lockDevice()
+                            }
+                        }
                     } label: {
                         HStack {
                             Spacer()
@@ -136,7 +188,7 @@ struct DeviceDetailView: View {
                             } else {
                                 Image(systemName: "lock.fill")
                             }
-                            Text(String(localized: "Lock device"))
+                            Text(lockButtonText)
                             Spacer()
                         }
                     }
@@ -166,18 +218,18 @@ struct DeviceDetailView: View {
             await loadCurrentState()
         }
         .confirmationDialog(
-            String(localized: "Lock \(accessory.name)?"),
+            String(localized: "Lock \(accessory.name) indefinitely?"),
             isPresented: $showingLockConfirmation,
             titleVisibility: .visible
         ) {
-            Button(String(localized: "Lock for \(selectedDuration.displayName)")) {
+            Button(String(localized: "Lock until I unlock"), role: .destructive) {
                 Task {
                     await lockDevice()
                 }
             }
             Button(String(localized: "Cancel"), role: .cancel) { }
         } message: {
-            Text(String(localized: "The device will be kept \(lockToState ? "on" : "off") for \(selectedDuration.displayName.lowercased())."))
+            Text(String(localized: "The device will be kept \(lockToState ? "on" : "off") until you manually unlock it."))
         }
         .alert(String(localized: "Error"), isPresented: $showingError) {
             Button("OK") { }
@@ -196,31 +248,62 @@ struct DeviceDetailView: View {
     }
 
     private func lockDevice() async {
-        isLocking = true
-        defer { isLocking = false }
+        guard !isLocking else { return }
+
+        guard homeKit.isAuthorized else {
+            await MainActor.run {
+                errorMessage = "HomeKit not authorized"
+                showingError = true
+            }
+            return
+        }
+
+        guard !isLoading else {
+            await MainActor.run {
+                errorMessage = "Device still loading, please wait"
+                showingError = true
+            }
+            return
+        }
+
+        await MainActor.run {
+            isLocking = true
+        }
+
+        defer {
+            Task { @MainActor in
+                isLocking = false
+            }
+        }
 
         do {
             try await homeKit.setAccessoryPower(accessory, on: lockToState)
-            isOn = lockToState
+            await MainActor.run {
+                isOn = lockToState
+            }
 
             let triggerID = try await homeKit.createLockTrigger(
                 for: accessory,
                 lockedState: lockToState
             )
 
-            lockManager.addLock(
-                accessoryID: accessory.uniqueIdentifier,
-                accessoryName: accessory.name,
-                triggerID: triggerID,
-                lockedState: lockToState,
-                duration: selectedDuration.seconds
-            )
+            await MainActor.run {
+                lockManager.addLock(
+                    accessoryID: accessory.uniqueIdentifier,
+                    accessoryName: accessory.name,
+                    triggerID: triggerID,
+                    lockedState: lockToState,
+                    duration: selectedDuration
+                )
+            }
 
             print("DeviceDetailView: Lock activated successfully")
 
         } catch {
-            errorMessage = String(localized: "Could not lock the device: \(error.localizedDescription)")
-            showingError = true
+            await MainActor.run {
+                errorMessage = String(localized: "Could not lock the device: \(error.localizedDescription)")
+                showingError = true
+            }
             print("DeviceDetailView: Error locking: \(error)")
         }
     }

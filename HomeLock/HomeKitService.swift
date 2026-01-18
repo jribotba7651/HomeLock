@@ -63,9 +63,17 @@ class HomeKitService: NSObject, ObservableObject {
         do {
             try await powerState.readValue()
             return powerState.value as? Bool
-        } catch {
-            print("Error reading power state: \(error)")
-            return nil
+        } catch let error as NSError {
+            if error.domain == "HMErrorDomain" && error.code == 80 {
+                // Expected: Background access not allowed
+                return nil
+            } else if error.domain == "HMErrorDomain" && error.code == 74 {
+                // Expected: Device doesn't support reading power state
+                return nil
+            } else {
+                print("Error reading power state: \(error)")
+                return nil
+            }
         }
     }
 
@@ -119,11 +127,42 @@ class HomeKitService: NSObject, ObservableObject {
         let actionSetPrefix = "HomeLock_Revert_"
         print("🔒 [HomeLock] Nombre del trigger: \(triggerName)")
 
-        // ========== LIMPIEZA AGRESIVA ==========
+        // ========== PROTECCIÓN CONTRA MEMORY LEAK ==========
         // Contar triggers HomeLock existentes
         let homeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
         let homeLockActionSets = home.actionSets.filter { $0.name.hasPrefix("HomeLock_") }
         print("🧹 [HomeLock] ANTES - HomeLock triggers: \(homeLockTriggers.count), ActionSets: \(homeLockActionSets.count)")
+
+        // PROTECCIÓN: Si hay demasiados triggers, limpiar todo
+        let totalTriggers = home.triggers.count
+        if totalTriggers > 50 || homeLockTriggers.count > 20 {
+            print("🚨 [HomeLock] MEMORY LEAK DETECTADO! Total triggers: \(totalTriggers), HomeLock: \(homeLockTriggers.count)")
+            print("🧹 [HomeLock] Ejecutando limpieza masiva...")
+
+            // Limpiar TODOS los triggers HomeLock
+            for trigger in homeLockTriggers {
+                print("🧹 [HomeLock] Eliminando trigger: \(trigger.name)")
+
+                // Eliminar action sets del trigger
+                if let eventTrigger = trigger as? HMEventTrigger {
+                    for actionSet in eventTrigger.actionSets where actionSet.name.hasPrefix("HomeLock_") {
+                        try? await home.removeActionSet(actionSet)
+                    }
+                }
+
+                try? await home.removeTrigger(trigger)
+            }
+
+            // Limpiar action sets huérfanos
+            for actionSet in homeLockActionSets {
+                try? await home.removeActionSet(actionSet)
+            }
+
+            print("🧹 [HomeLock] Limpieza masiva completada")
+
+            // Pausa para estabilizar HomeKit
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 segundo
+        }
 
         print("🔒 [HomeLock] Todos los triggers en home (\(home.triggers.count)):")
         for existingTrigger in home.triggers {
@@ -300,6 +339,7 @@ class HomeKitService: NSObject, ObservableObject {
         return trigger.uniqueIdentifier
     }
 
+
     /// Crea un ActionSet que revierte el estado del dispositivo
     private func createRevertActionSet(home: HMHome, characteristic: HMCharacteristic, targetState: Bool, accessoryName: String) async throws -> HMActionSet {
         let actionSetName = "HomeLock_Revert_\(characteristic.uniqueIdentifier.uuidString)"
@@ -371,21 +411,41 @@ class HomeKitService: NSObject, ObservableObject {
 
         // Buscar el trigger por UUID
         guard let trigger = home.triggers.first(where: { $0.uniqueIdentifier == triggerID }) else {
-            print("HomeLock: Trigger no encontrado, puede que ya haya sido eliminado")
+            print("🧹 [HomeLock] Trigger no encontrado, puede que ya haya sido eliminado")
             return
         }
 
-        // Eliminar action sets asociados
+        print("🧹 [HomeLock] Eliminando trigger: \(trigger.name)")
+
+        // Eliminar action sets asociados primero
         if let eventTrigger = trigger as? HMEventTrigger {
             for actionSet in eventTrigger.actionSets {
                 if actionSet.name.hasPrefix("HomeLock_Revert_") {
-                    try? await home.removeActionSet(actionSet)
+                    print("🧹 [HomeLock] Eliminando ActionSet: \(actionSet.name)")
+                    try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                        home.removeActionSet(actionSet) { error in
+                            if let error {
+                                print("⚠️ [HomeLock] Error eliminando ActionSet: \(error.localizedDescription)")
+                            }
+                            continuation.resume()
+                        }
+                    }
                 }
             }
         }
 
-        try await home.removeTrigger(trigger)
-        print("HomeLock: Trigger eliminado para \(accessory.name)")
+        // Eliminar el trigger
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            home.removeTrigger(trigger) { error in
+                if let error {
+                    print("❌ [HomeLock] Error eliminando trigger: \(error)")
+                    continuation.resume(throwing: error)
+                } else {
+                    print("✅ [HomeLock] Trigger eliminado para \(accessory.name)")
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     /// Elimina un trigger de lock por nombre del accesorio
@@ -409,8 +469,17 @@ class HomeKitService: NSObject, ObservableObject {
             }
         }
 
-        try await home.removeTrigger(trigger)
-        print("HomeLock: Trigger eliminado para \(accessory.name)")
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            home.removeTrigger(trigger) { error in
+                if let error {
+                    print("❌ [HomeLock] Error eliminando trigger: \(error)")
+                    continuation.resume(throwing: error)
+                } else {
+                    print("✅ [HomeLock] Trigger eliminado para \(accessory.name)")
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     /// Elimina TODAS las automatizaciones de HomeLock (triggers y action sets que empiezan con "HomeLock_")
@@ -554,6 +623,7 @@ enum HomeKitError: LocalizedError {
     case characteristicNotFound
     case homeNotFound
     case triggerCreationFailed
+    case unknown
 
     var errorDescription: String? {
         switch self {
@@ -565,6 +635,8 @@ enum HomeKitError: LocalizedError {
             return "No se encontró el home del accesorio"
         case .triggerCreationFailed:
             return "No se pudo crear el trigger de bloqueo"
+        case .unknown:
+            return "Error desconocido en HomeKit"
         }
     }
 }

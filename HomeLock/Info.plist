@@ -4,9 +4,16 @@
 <dict>
 	<key>NSHomeKitUsageDescription</key>
 	<string>HomeLock necesita acceso a HomeKit para controlar tus enchufes inteligentes y aplicar límites de tiempo.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>HomeLock utiliza Face ID para proporcionarte acceso rápido y seguro a la aplicación.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
+		<string>background-processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.jibaroenaluna.homelock.expireLock</string>
 	</array>
 </dict>
 </plist>

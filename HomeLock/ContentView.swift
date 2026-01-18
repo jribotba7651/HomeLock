@@ -15,6 +15,15 @@ struct ContentView: View {
     @State private var showingCleanupConfirmation = false
     @State private var isCleaningUp = false
     @State private var cleanupResult: Int?
+    @State private var showingEmergencyUnlockConfirmation = false
+    @State private var isEmergencyUnlocking = false
+    @State private var emergencyUnlockResult: Int?
+
+    private var groupedAccessories: [String: [HMAccessory]] {
+        Dictionary(grouping: homeKit.outlets) { accessory in
+            accessory.room?.name ?? String(localized: "No Room")
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -32,15 +41,23 @@ struct ContentView: View {
                         description: Text(String(localized: "No outlets, switches, or lights found in your HomeKit"))
                     )
                 } else {
-                    List(homeKit.outlets, id: \.uniqueIdentifier) { accessory in
-                        NavigationLink {
-                            DeviceDetailView(accessory: accessory, homeKit: homeKit)
-                        } label: {
-                            AccessoryRow(
-                                accessory: accessory,
-                                homeKit: homeKit,
-                                lockManager: lockManager
-                            )
+                    List {
+                        ForEach(groupedAccessories.keys.sorted(), id: \.self) { roomName in
+                            Section {
+                                ForEach(groupedAccessories[roomName] ?? [], id: \.uniqueIdentifier) { accessory in
+                                    NavigationLink {
+                                        DeviceDetailView(accessory: accessory, homeKit: homeKit)
+                                    } label: {
+                                        AccessoryRow(
+                                            accessory: accessory,
+                                            homeKit: homeKit,
+                                            lockManager: lockManager
+                                        )
+                                    }
+                                }
+                            } header: {
+                                Text(roomName)
+                            }
                         }
                     }
                 }
@@ -49,6 +66,17 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
+                        if !lockManager.locks.isEmpty {
+                            Button(role: .destructive) {
+                                showingEmergencyUnlockConfirmation = true
+                            } label: {
+                                Label(String(localized: "Liberar todos los locks"), systemImage: "lock.open.fill")
+                            }
+                            .disabled(isEmergencyUnlocking)
+
+                            Divider()
+                        }
+
                         Button(role: .destructive) {
                             showingCleanupConfirmation = true
                         } label: {
@@ -56,7 +84,7 @@ struct ContentView: View {
                         }
                         .disabled(isCleaningUp)
                     } label: {
-                        if isCleaningUp {
+                        if isCleaningUp || isEmergencyUnlocking {
                             ProgressView()
                         } else {
                             Image(systemName: "ellipsis.circle")
@@ -64,13 +92,20 @@ struct ContentView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack {
-                        Image(systemName: homeKit.isAuthorized ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(homeKit.isAuthorized ? .green : .secondary)
-                        Text("\(homeKit.outlets.count)")
-                            .foregroundStyle(.secondary)
+                    HStack(spacing: 16) {
+                        NavigationLink(destination: SettingsView()) {
+                            Image(systemName: "gearshape")
+                                .foregroundStyle(.blue)
+                        }
+
+                        HStack {
+                            Image(systemName: homeKit.isAuthorized ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(homeKit.isAuthorized ? .green : .secondary)
+                            Text("\(homeKit.outlets.count)")
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.caption)
                     }
-                    .font(.caption)
                 }
             }
             .confirmationDialog(
@@ -87,6 +122,20 @@ struct ContentView: View {
             } message: {
                 Text(String(localized: "This will remove all HomeLock triggers and automations from your HomeKit. Your other automations will not be affected."))
             }
+            .confirmationDialog(
+                String(localized: "Liberar todos los locks?"),
+                isPresented: $showingEmergencyUnlockConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(String(localized: "Liberar todos"), role: .destructive) {
+                    Task {
+                        await performEmergencyUnlock()
+                    }
+                }
+                Button(String(localized: "Cancel"), role: .cancel) { }
+            } message: {
+                Text(String(localized: "Todos los dispositivos bloqueados serán liberados inmediatamente."))
+            }
             .alert(
                 String(localized: "Cleanup complete"),
                 isPresented: Binding(
@@ -98,6 +147,19 @@ struct ContentView: View {
             } message: {
                 if let count = cleanupResult {
                     Text(String(localized: "Removed \(count) HomeLock automation(s)."))
+                }
+            }
+            .alert(
+                String(localized: "Locks liberados"),
+                isPresented: Binding(
+                    get: { emergencyUnlockResult != nil },
+                    set: { if !$0 { emergencyUnlockResult = nil } }
+                )
+            ) {
+                Button("OK") { emergencyUnlockResult = nil }
+            } message: {
+                if let count = emergencyUnlockResult {
+                    Text(String(localized: "Se liberaron \(count) locks exitosamente."))
                 }
             }
         }
@@ -123,6 +185,25 @@ struct ContentView: View {
         // Remove HomeKit automations
         let removed = await homeKit.removeAllHomeLockAutomations()
         cleanupResult = removed
+    }
+
+    private func performEmergencyUnlock() async {
+        isEmergencyUnlocking = true
+        defer { isEmergencyUnlocking = false }
+
+        let lockCount = lockManager.locks.count
+        print("🚨 [ContentView] Emergency unlock started for \(lockCount) locks")
+
+        // Remove all locks using LockManager
+        for accessoryID in lockManager.locks.keys {
+            await lockManager.removeLock(for: accessoryID)
+        }
+
+        // Cancel all pending notifications as well
+        await NotificationManager.shared.cancelAllLockExpirationNotifications()
+
+        emergencyUnlockResult = lockCount
+        print("🚨 [ContentView] Emergency unlock completed for \(lockCount) locks")
     }
 }
 
@@ -166,18 +247,10 @@ struct AccessoryRow: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    if let room = accessory.room {
-                        Text(room.name)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if !isLoading {
-                        Text(isOn ? String(localized: "On") : String(localized: "Off"))
-                            .font(.caption)
-                            .foregroundStyle(isOn ? .green : .secondary)
-                    }
+                if !isLoading {
+                    Text(isOn ? String(localized: "On") : String(localized: "Off"))
+                        .font(.caption)
+                        .foregroundStyle(isOn ? .green : .secondary)
                 }
             }
 
