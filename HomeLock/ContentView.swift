@@ -6,11 +6,58 @@
 //
 
 import SwiftUI
+import SwiftData
 import HomeKit
 
 struct ContentView: View {
     @StateObject private var homeKit = HomeKitService()
     @ObservedObject private var lockManager = LockManager.shared
+    @ObservedObject private var scheduleManager = ScheduleManager.shared
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var selectedTab = 0
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            DashboardView(homeKit: homeKit, lockManager: lockManager)
+                .tabItem { Label("Home", systemImage: "house.fill") }
+                .tag(0)
+
+            ScheduleListView()
+                .environmentObject(homeKit)
+                .tabItem { Label("Schedule", systemImage: "calendar") }
+                .tag(1)
+
+            HistoryView()
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                .tag(2)
+
+            SettingsView()
+                .tabItem { Label("Settings", systemImage: "gear") }
+                .tag(3)
+        }
+        .onAppear {
+            homeKit.requestAuthorization()
+        }
+        .onChange(of: homeKit.isAuthorized) { _, isAuthorized in
+            if isAuthorized {
+                lockManager.configure(with: homeKit)
+                lockManager.configure(modelContext: modelContext)
+                scheduleManager.configure(
+                    modelContext: modelContext,
+                    homeKitService: homeKit,
+                    lockManager: lockManager
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Dashboard View (formerly main ContentView content)
+
+struct DashboardView: View {
+    @ObservedObject var homeKit: HomeKitService
+    @ObservedObject var lockManager: LockManager
 
     @State private var showingCleanupConfirmation = false
     @State private var isCleaningUp = false
@@ -93,11 +140,6 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 16) {
-                        NavigationLink(destination: SettingsView()) {
-                            Image(systemName: "gearshape")
-                                .foregroundStyle(.blue)
-                        }
-
                         HStack {
                             Image(systemName: homeKit.isAuthorized ? "checkmark.circle.fill" : "circle")
                                 .foregroundStyle(homeKit.isAuthorized ? .green : .secondary)
@@ -163,14 +205,6 @@ struct ContentView: View {
                 }
             }
         }
-        .onAppear {
-            homeKit.requestAuthorization()
-        }
-        .onChange(of: homeKit.isAuthorized) { _, isAuthorized in
-            if isAuthorized {
-                lockManager.configure(with: homeKit)
-            }
-        }
     }
 
     private func performCleanup() async {
@@ -192,7 +226,7 @@ struct ContentView: View {
         defer { isEmergencyUnlocking = false }
 
         let lockCount = lockManager.locks.count
-        print("🚨 [ContentView] Emergency unlock started for \(lockCount) locks")
+        print("🚨 [DashboardView] Emergency unlock started for \(lockCount) locks")
 
         // Remove all locks using LockManager
         for accessoryID in lockManager.locks.keys {
@@ -203,9 +237,11 @@ struct ContentView: View {
         await NotificationManager.shared.cancelAllLockExpirationNotifications()
 
         emergencyUnlockResult = lockCount
-        print("🚨 [ContentView] Emergency unlock completed for \(lockCount) locks")
+        print("🚨 [DashboardView] Emergency unlock completed for \(lockCount) locks")
     }
 }
+
+// MARK: - Accessory Row
 
 struct AccessoryRow: View {
     let accessory: HMAccessory
@@ -268,4 +304,5 @@ struct AccessoryRow: View {
 
 #Preview {
     ContentView()
+        .modelContainer(for: [LockEvent.self, LockSchedule.self], inMemory: true)
 }

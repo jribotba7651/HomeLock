@@ -9,6 +9,7 @@ import Foundation
 import Combine
 import HomeKit
 import BackgroundTasks
+import SwiftData
 
 /// Configuración de un lock persistido
 struct LockConfiguration: Codable, Identifiable {
@@ -42,6 +43,7 @@ class LockManager: ObservableObject {
     private let userDefaultsKey = "HomeLock_ActiveLocks"
     private var expirationTimers: [UUID: Timer] = [:]
     private var homeKitService: HomeKitService?
+    private var modelContext: ModelContext?
 
     // Background Task Management
     nonisolated static let backgroundTaskIdentifier = "com.jibaroenaluna.homelock.expireLock"
@@ -126,6 +128,37 @@ class LockManager: ObservableObject {
         }
     }
 
+    /// Configura el ModelContext para el logging de eventos
+    func configure(modelContext: ModelContext) {
+        self.modelContext = modelContext
+    }
+
+    // MARK: - Event Logging
+
+    /// Logs a lock event to the history
+    func logEvent(_ type: LockEventType, accessoryUUID: UUID, accessoryName: String, duration: TimeInterval? = nil, notes: String? = nil) {
+        guard let modelContext = modelContext else {
+            print("⚠️ [LockManager] ModelContext not available for logging")
+            return
+        }
+
+        let event = LockEvent(
+            accessoryUUID: accessoryUUID,
+            accessoryName: accessoryName,
+            eventType: type.rawValue,
+            duration: duration,
+            notes: notes
+        )
+        modelContext.insert(event)
+
+        print("📝 [LockManager] Logged event: \(type.rawValue) for \(accessoryName)")
+    }
+
+    /// Logs a tamper attempt (device state changed while locked)
+    func logTamperAttempt(accessoryUUID: UUID, accessoryName: String) {
+        logEvent(.tamper, accessoryUUID: accessoryUUID, accessoryName: accessoryName, notes: "State change attempt blocked")
+    }
+
     // MARK: - Public API
 
     /// Agrega un nuevo lock
@@ -169,11 +202,17 @@ class LockManager: ObservableObject {
         // Iniciar polling
         startPolling()
 
+        // Log the lock event
+        logEvent(.locked, accessoryUUID: accessoryID, accessoryName: accessoryName, duration: duration)
+
         print("🔒 [LockManager] Lock agregado para \(accessoryName), expira: \(expiresAt?.description ?? "nunca")")
     }
 
     /// Elimina un lock
-    func removeLock(for accessoryID: UUID) async {
+    /// - Parameters:
+    ///   - accessoryID: The accessory to unlock
+    ///   - logEvent: Whether to log the unlock event (set to false when called from expiration handling)
+    func removeLock(for accessoryID: UUID, logEvent: Bool = true) async {
         guard let config = locks[accessoryID] else { return }
 
         // Cancelar timer de expiración, background task y notificación
@@ -202,6 +241,11 @@ class LockManager: ObservableObject {
 
         // Detener polling si no hay más locks
         stopPollingIfNeeded()
+
+        // Log the unlock event (unless called from expiration handling which logs its own event)
+        if logEvent {
+            self.logEvent(.unlocked, accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+        }
 
         print("🔓 [LockManager] Lock eliminado para \(config.accessoryName)")
     }
@@ -338,6 +382,9 @@ class LockManager: ObservableObject {
                 print("   Estado deseado: \(config.lockedState ? "ON" : "OFF")")
                 print("   ➡️ Revirtiendo...")
 
+                // Log tamper attempt
+                logTamperAttempt(accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+
                 // Revertir al estado bloqueado
                 do {
                     try await homeKit.setAccessoryPower(accessory, on: config.lockedState)
@@ -469,16 +516,20 @@ class LockManager: ObservableObject {
         }
         print("⏰ [LockManager] Lock expirado para \(config.accessoryName)")
 
+        // Log the expiration event before removing the lock
+        logEvent(.expired, accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+
         // Limpiar timer inmediatamente
         expirationTimers[accessoryID]?.invalidate()
         expirationTimers.removeValue(forKey: accessoryID)
 
-        await removeLock(for: accessoryID)
+        await removeLock(for: accessoryID, logEvent: false)
     }
 
     private func checkExpiredLocks() async {
         for (accessoryID, config) in locks where config.isExpired {
-            await removeLock(for: accessoryID)
+            logEvent(.expired, accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+            await removeLock(for: accessoryID, logEvent: false)
         }
     }
 
@@ -492,7 +543,8 @@ class LockManager: ObservableObject {
 
         for (accessoryID, config) in currentLocks where config.isExpired {
             print("🚨 [LockManager] Found expired lock in background: \(config.accessoryName)")
-            await removeLock(for: accessoryID)
+            logEvent(.expired, accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+            await removeLock(for: accessoryID, logEvent: false)
             expiredCount += 1
         }
 

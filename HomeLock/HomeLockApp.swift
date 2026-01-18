@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftData
 import BackgroundTasks
 import UserNotifications
 
@@ -13,7 +14,22 @@ import UserNotifications
 struct HomeLockApp: App {
     @AppStorage("appearanceMode") var appearanceMode: Int = 0
 
+    let modelContainer: ModelContainer
+
     init() {
+        // Initialize SwiftData ModelContainer
+        let schema = Schema([
+            LockEvent.self,
+            LockSchedule.self,
+        ])
+        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+
+        do {
+            modelContainer = try ModelContainer(for: schema, configurations: [modelConfiguration])
+        } catch {
+            fatalError("Could not create ModelContainer: \(error)")
+        }
+
         registerBackgroundTasks()
         requestNotificationPermissions()
         setupNotificationDelegate()
@@ -31,6 +47,7 @@ struct HomeLockApp: App {
                 appearanceMode == 1 ? .light : .dark
             )
         }
+        .modelContainer(modelContainer)
     }
 
     private func registerBackgroundTasks() {
