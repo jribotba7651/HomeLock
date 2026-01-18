@@ -9,6 +9,7 @@ import Foundation
 import SwiftData
 import HomeKit
 import UserNotifications
+import Combine
 
 @MainActor
 class ScheduleManager: ObservableObject {
