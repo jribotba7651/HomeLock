@@ -637,6 +637,11 @@ extension HomeKitService: HMHomeManagerDelegate {
             self.homes = manager.homes
             self.isAuthorized = true
 
+            // Set delegate for each home to receive trigger updates
+            for home in manager.homes {
+                home.delegate = self
+            }
+
             // Recolectar todos los accesorios de todos los homes
             var allAccessories: [HMAccessory] = []
             for home in manager.homes {
@@ -679,6 +684,59 @@ extension HomeKitService: HMHomeManagerDelegate {
 
             // Notify that homes were updated (for sync)
             self.homesLastUpdated = Date()
+        }
+    }
+}
+
+// MARK: - HMHomeDelegate
+extension HomeKitService: HMHomeDelegate {
+    // Called when a trigger is added to the home (including by other users)
+    nonisolated func home(_ home: HMHome, didAdd trigger: HMTrigger) {
+        Task { @MainActor in
+            print("🔔 [HomeKit] Trigger added: \(trigger.name)")
+            if trigger.name.hasPrefix("HomeLock_") {
+                print("🔔 [HomeKit] HomeLock trigger detected from another device!")
+                self.homesLastUpdated = Date()
+            }
+        }
+    }
+
+    // Called when a trigger is removed from the home (including by other users)
+    nonisolated func home(_ home: HMHome, didRemove trigger: HMTrigger) {
+        Task { @MainActor in
+            print("🔔 [HomeKit] Trigger removed: \(trigger.name)")
+            if trigger.name.hasPrefix("HomeLock_") {
+                print("🔔 [HomeKit] HomeLock trigger removed from another device!")
+                self.homesLastUpdated = Date()
+            }
+        }
+    }
+
+    // Called when a trigger is updated
+    nonisolated func home(_ home: HMHome, didUpdateTrigger trigger: HMTrigger) {
+        Task { @MainActor in
+            print("🔔 [HomeKit] Trigger updated: \(trigger.name)")
+            if trigger.name.hasPrefix("HomeLock_") {
+                self.homesLastUpdated = Date()
+            }
+        }
+    }
+
+    // Called when an accessory is added
+    nonisolated func home(_ home: HMHome, didAdd accessory: HMAccessory) {
+        Task { @MainActor in
+            print("🔔 [HomeKit] Accessory added: \(accessory.name)")
+            self.accessories.append(accessory)
+            self.outlets = filterOutlets(from: self.accessories)
+        }
+    }
+
+    // Called when an accessory is removed
+    nonisolated func home(_ home: HMHome, didRemove accessory: HMAccessory) {
+        Task { @MainActor in
+            print("🔔 [HomeKit] Accessory removed: \(accessory.name)")
+            self.accessories.removeAll { $0.uniqueIdentifier == accessory.uniqueIdentifier }
+            self.outlets = filterOutlets(from: self.accessories)
         }
     }
 }

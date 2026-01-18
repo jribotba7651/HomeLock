@@ -140,24 +140,34 @@ struct DashboardView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
-                        // Sync status indicator
-                        if lockManager.isSyncing {
-                            HStack(spacing: 4) {
-                                ProgressView()
-                                    .scaleEffect(0.6)
-                                Text("Syncing")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                        // Sync status indicator (tappable for manual sync)
+                        Button {
+                            Task {
+                                await lockManager.syncFromHomeKit()
                             }
-                        } else if let lastSync = lockManager.lastSyncTime {
-                            HStack(spacing: 4) {
+                        } label: {
+                            if lockManager.isSyncing {
+                                HStack(spacing: 4) {
+                                    ProgressView()
+                                        .scaleEffect(0.6)
+                                    Text("Syncing")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else if let lastSync = lockManager.lastSyncTime {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .foregroundStyle(.green)
+                                    Text(lastSync, style: .relative)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else {
                                 Image(systemName: "arrow.triangle.2.circlepath")
-                                    .foregroundStyle(.green)
-                                Text(lastSync, style: .relative)
-                                    .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        .disabled(lockManager.isSyncing)
 
                         // Device count
                         HStack(spacing: 4) {
