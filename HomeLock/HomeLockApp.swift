@@ -39,7 +39,9 @@ struct HomeLockApp: App {
         WindowGroup {
             SplashContainer {
                 AuthenticationView {
-                    ContentView()
+                    PaywallContainer {
+                        ContentView()
+                    }
                 }
             }
             .preferredColorScheme(
