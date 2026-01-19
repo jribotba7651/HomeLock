@@ -10,7 +10,7 @@ import SwiftData
 import HomeKit
 
 struct ContentView: View {
-    @StateObject private var homeKit = HomeKitService()
+    @ObservedObject private var homeKit = HomeKitService.shared
     @ObservedObject private var lockManager = LockManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
     @Environment(\.modelContext) private var modelContext

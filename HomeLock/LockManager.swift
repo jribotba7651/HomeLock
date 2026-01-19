@@ -497,6 +497,15 @@ class LockManager: ObservableObject {
         let currentLocks = locks
 
         for (accessoryID, config) in currentLocks {
+            // Buscar el accesorio
+            guard let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) else {
+                print("⚠️ [LockManager] Accesorio no encontrado: \(config.accessoryName)")
+                continue
+            }
+
+            // Detectar si es Lutron para aplicar rate limiting
+            let isLutron = homeKit.isLutronDevice(accessory)
+
             // Verificar si expiró
             if config.isExpired {
                 print("⏰ [LockManager] Lock expirado durante polling: \(config.accessoryName)")
@@ -504,43 +513,38 @@ class LockManager: ObservableObject {
                 continue
             }
 
-            // Buscar el accesorio
-            guard let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) else {
-                print("⚠️ [LockManager] Accesorio no encontrado: \(config.accessoryName)")
-                continue
-            }
-
             // Leer estado actual (puede fallar en background)
             guard let currentState = await homeKit.isAccessoryOn(accessory) else {
-                // print("⚠️ [LockManager] No se pudo leer estado de: \(config.accessoryName)")
                 continue
             }
 
             // Verificar si el estado es el deseado
             if currentState != config.lockedState {
-                print("🚨 [LockManager] Estado incorrecto detectado!")
-                print("   Dispositivo: \(config.accessoryName)")
-                print("   Estado actual: \(currentState ? "ON" : "OFF")")
-                print("   Estado deseado: \(config.lockedState ? "ON" : "OFF")")
-                print("   ➡️ Revirtiendo...")
-
+                print("🚨 [LockManager] Estado incorrecto detectado en \(config.accessoryName)!")
+                
                 // Log tamper attempt
                 logTamperAttempt(accessoryUUID: accessoryID, accessoryName: config.accessoryName)
 
-                // Show tamper notification to all home members
+                // Show tamper notification
                 await NotificationManager.shared.showTamperNotification(accessoryName: config.accessoryName)
 
                 // Revertir al estado bloqueado
                 do {
                     try await homeKit.setAccessoryPower(accessory, on: config.lockedState)
                     print("✅ [LockManager] Revertido exitosamente a \(config.lockedState ? "ON" : "OFF")")
+                    
+                    // Delay extra si es Lutron para no saturar el bridge después de una acción
+                    if isLutron {
+                        try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+                    }
                 } catch {
                     print("❌ [LockManager] Error revirtiendo: \(error.localizedDescription)")
                 }
-            } else {
-                // Estado correcto, log silencioso
-                // print("✓ [LockManager] \(config.accessoryName): OK")
             }
+            
+            // Pausa mínima entre accesorios para evitar ráfagas al bridge (especialmente Lutron)
+            let interDeviceDelay = isLutron ? 300_000_000 : 100_000_000 // 300ms vs 100ms
+            try? await Task.sleep(nanoseconds: UInt64(interDeviceDelay))
         }
     }
 
