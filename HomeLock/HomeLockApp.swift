@@ -31,6 +31,9 @@ struct HomeLockApp: App {
         registerBackgroundTasks()
         requestNotificationPermissions()
         setupNotificationDelegate()
+        
+        // Initialize HomeKit for background/Shortcuts support
+        HomeKitService.shared.requestAuthorization()
     }
 
     var body: some Scene {

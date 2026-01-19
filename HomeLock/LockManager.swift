@@ -44,7 +44,6 @@ class LockManager: ObservableObject {
 
     private let userDefaultsKey = "HomeLock_ActiveLocks"
     private var expirationTimers: [UUID: Timer] = [:]
-    private var homeKitService: HomeKitService?
     private var modelContext: ModelContext?
     private var homeKitCancellable: AnyCancellable?
     private var syncTimer: Timer?
@@ -125,13 +124,7 @@ class LockManager: ObservableObject {
         print("🧹 [LockManager] Cleanup completed")
     }
 
-    /// Configura el servicio de HomeKit para poder eliminar triggers
     func configure(with homeKitService: HomeKitService) {
-        // Solo configurar si es diferente o es la primera vez
-        guard self.homeKitService !== homeKitService else { return }
-
-        self.homeKitService = homeKitService
-
         // Verificar locks expirados y triggers huérfanos al iniciar
         Task { [weak self] in
             await self?.checkExpiredLocks()
@@ -144,7 +137,7 @@ class LockManager: ObservableObject {
         }
 
         // Suscribirse a actualizaciones de HomeKit para sincronización multi-usuario
-        homeKitCancellable = homeKitService.$homesLastUpdated
+        homeKitCancellable = HomeKitService.shared.$homesLastUpdated
             .dropFirst()
             .debounce(for: .seconds(3), scheduler: RunLoop.main) // Debounce increased to 3s
             .sink { [weak self] _ in
@@ -303,6 +296,34 @@ class LockManager: ObservableObject {
 
     // MARK: - Public API
 
+    /// Locks a device with the given parameters (Shortcuts entry point)
+    func lockDevice(accessoryID: UUID, duration: TimeInterval?, lockedState: Bool = false) async throws {
+        guard let homeKit = homeKitService else {
+            print("❌ [LockManager] HomeKitService not configured")
+            return
+        }
+
+        guard let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) else {
+            print("❌ [LockManager] Accessory \(accessoryID) not found")
+            return
+        }
+
+        // 1. Set power state
+        try await homeKit.setAccessoryPower(accessory, on: lockedState)
+        
+        // 2. Create trigger
+        let triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: lockedState)
+        
+        // 3. Add to local state
+        addLock(
+            accessoryID: accessoryID,
+            accessoryName: accessory.name,
+            triggerID: triggerID,
+            lockedState: lockedState,
+            duration: duration
+        )
+    }
+
     /// Agrega un nuevo lock
     func addLock(
         accessoryID: UUID,
@@ -402,6 +423,14 @@ class LockManager: ObservableObject {
     func getLock(for accessoryID: UUID) -> LockConfiguration? {
         guard let config = locks[accessoryID], !config.isExpired else { return nil }
         return config
+    }
+
+    /// Returns the lock status and remaining time for an accessory (Shortcuts entry point)
+    func getLockStatus(accessoryID: UUID) -> (isLocked: Bool, remainingTime: TimeInterval?) {
+        guard let config = locks[accessoryID], !config.isExpired else {
+            return (false, nil)
+        }
+        return (true, config.timeRemaining)
     }
 
     // MARK: - Polling Enforcement
