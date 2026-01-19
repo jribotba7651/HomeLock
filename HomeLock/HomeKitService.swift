@@ -652,34 +652,6 @@ extension HomeKitService: HMHomeManagerDelegate {
 
             print("🏠 [HomeKit] ========== HOMES ACTUALIZADOS ==========")
             print("🏠 [HomeKit] \(homes.count) homes, \(accessories.count) accessories, \(outlets.count) outlets/switches")
-
-            // Debug: listar todos los triggers existentes
-            for home in manager.homes {
-                print("🏠 [HomeKit] Home: \(home.name)")
-                print("   Triggers: \(home.triggers.count)")
-                for trigger in home.triggers {
-                    let enabled = trigger.isEnabled ? "✅" : "❌"
-                    print("   \(enabled) \(trigger.name) (UUID: \(trigger.uniqueIdentifier))")
-                    if let eventTrigger = trigger as? HMEventTrigger {
-                        print("      Events: \(eventTrigger.events.count)")
-                        for event in eventTrigger.events {
-                            if let charEvent = event as? HMCharacteristicEvent<NSCopying> {
-                                print("      - CharEvent: triggerValue=\(String(describing: charEvent.triggerValue))")
-                            }
-                        }
-                        print("      ActionSets: \(eventTrigger.actionSets.count)")
-                        for actionSet in eventTrigger.actionSets {
-                            print("      - \(actionSet.name): \(actionSet.actions.count) actions")
-                        }
-                    }
-                }
-                print("   ActionSets: \(home.actionSets.count)")
-                for actionSet in home.actionSets {
-                    if actionSet.name.hasPrefix("HomeLock") {
-                        print("   - \(actionSet.name): \(actionSet.actions.count) actions")
-                    }
-                }
-            }
             print("🏠 [HomeKit] ==========================================")
 
             // Notify that homes were updated (for sync)

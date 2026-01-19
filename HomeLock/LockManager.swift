@@ -48,14 +48,14 @@ class LockManager: ObservableObject {
     private var modelContext: ModelContext?
     private var homeKitCancellable: AnyCancellable?
     private var syncTimer: Timer?
-    private let syncInterval: TimeInterval = 10.0 // Sync every 10 seconds
+    private let syncInterval: TimeInterval = 30.0 // Sync every 30 seconds (increased from 10)
 
     // Background Task Management
     nonisolated static let backgroundTaskIdentifier = "com.jibaroenaluna.homelock.expireLock"
 
     // MARK: - Polling (Fallback for HMEventTrigger)
     private var pollingTimer: Timer?
-    private let pollingInterval: TimeInterval = 5.0 // Check every 5 seconds
+    private let pollingInterval: TimeInterval = 8.0 // Check every 8 seconds (increased from 5)
     private var isPolling = false
     private var isEnforcing = false // Prevent overlapping enforcement
 
@@ -146,7 +146,7 @@ class LockManager: ObservableObject {
         // Suscribirse a actualizaciones de HomeKit para sincronización multi-usuario
         homeKitCancellable = homeKitService.$homesLastUpdated
             .dropFirst()
-            .debounce(for: .seconds(1), scheduler: RunLoop.main)
+            .debounce(for: .seconds(3), scheduler: RunLoop.main) // Debounce increased to 3s
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     await self?.syncFromHomeKit()

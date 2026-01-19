@@ -29,7 +29,7 @@ struct RootView: View {
         .task {
             // Wait for StoreManager and View Hierarchy to stabilize
             // This is crucial for fullScreenCover to trigger correctly on app start
-            try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
+            try? await Task.sleep(nanoseconds: 1_200_000_000) // 1.2 seconds (increased from 0.8)
             
             guard !hasCheckedPaywall else { return }
             hasCheckedPaywall = true
