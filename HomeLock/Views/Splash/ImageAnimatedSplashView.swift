@@ -18,12 +18,20 @@ struct ImageAnimatedSplashView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 24) {
-                // Simple centered lock image
+                // New 2026 Logo
+                Image("AppLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 220, height: 220) // Adjusted size for the new logo
+                
+                /*
+                // Old centered lock image (Discarded)
                 Image("lock_closed")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 150, height: 150)
                     .foregroundStyle(.primary)
+                */
 
                 // Personal message with heart
                 VStack(spacing: 4) {
