@@ -12,12 +12,6 @@ import UserNotifications
 
 @main
 struct HomeLockApp: App {
-    @AppStorage("appearanceMode") var appearanceMode: Int = 0
-    @AppStorage("appLaunchCount") var appLaunchCount: Int = 0
-
-    @ObservedObject private var storeManager = StoreManager.shared
-    @State private var showPaywall = false
-
     let modelContainer: ModelContainer
 
     init() {
@@ -41,43 +35,9 @@ struct HomeLockApp: App {
 
     var body: some Scene {
         WindowGroup {
-            SplashContainer {
-                AuthenticationView {
-                    ContentView()
-                }
-            }
-            .preferredColorScheme(
-                appearanceMode == 0 ? nil :
-                appearanceMode == 1 ? .light : .dark
-            )
-            .fullScreenCover(isPresented: $showPaywall) {
-                PaywallView(isPresented: $showPaywall)
-            }
-            .onAppear {
-                checkPaywall()
-            }
+            RootView()
         }
         .modelContainer(modelContainer)
-    }
-
-    private func checkPaywall() {
-        // Increment launch count
-        appLaunchCount += 1
-        print("💰 [Paywall] Launch count: \(appLaunchCount)")
-
-        // Don't show if Pro
-        guard !storeManager.isPro else {
-            print("💰 [Paywall] User is Pro, skipping")
-            return
-        }
-
-        // Show on first launch or every 5 launches
-        if appLaunchCount == 1 || appLaunchCount % 5 == 0 {
-            print("💰 [Paywall] Will show paywall")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                showPaywall = true
-            }
-        }
     }
 
     private func registerBackgroundTasks() {
