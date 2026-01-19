@@ -244,7 +244,7 @@ struct DeviceDetailView: View {
             lockToState = state
         }
         isLoading = false
-        lockManager.configure(with: homeKit)
+        lockManager.configure()
     }
 
     private func lockDevice() async {

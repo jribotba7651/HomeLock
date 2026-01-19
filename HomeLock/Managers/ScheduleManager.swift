@@ -17,8 +17,6 @@ class ScheduleManager: ObservableObject {
 
     private var timer: Timer?
     private var modelContext: ModelContext?
-    private var homeKitService: HomeKitService?
-    private var lockManager: LockManager?
 
     // Track which schedules have active locks created by this manager
     @Published private(set) var activeScheduleLocks: Set<UUID> = [] // schedule IDs with active locks
@@ -32,10 +30,8 @@ class ScheduleManager: ObservableObject {
         print("📅 [ScheduleManager] ScheduleManager deallocated")
     }
 
-    func configure(modelContext: ModelContext, homeKitService: HomeKitService, lockManager: LockManager) {
+    func configure(modelContext: ModelContext) {
         self.modelContext = modelContext
-        self.homeKitService = homeKitService
-        self.lockManager = lockManager
 
         startMonitoring()
     }
@@ -132,11 +128,8 @@ class ScheduleManager: ObservableObject {
     }
 
     private func activateLockIfNeeded(for schedule: LockSchedule) async {
-        guard let homeKit = homeKitService,
-              let lockManager = lockManager else {
-            print("📅 [ScheduleManager] Services not available")
-            return
-        }
+        let homeKit = HomeKitService.shared
+        let lockManager = LockManager.shared
 
         // Check if already locked (by any means, not just schedule)
         guard !lockManager.isLocked(schedule.accessoryUUID) else {
@@ -182,10 +175,7 @@ class ScheduleManager: ObservableObject {
     }
 
     private func deactivateLockIfNeeded(for schedule: LockSchedule) async {
-        guard let lockManager = lockManager else {
-            print("📅 [ScheduleManager] LockManager not available")
-            return
-        }
+        let lockManager = LockManager.shared
 
         // Check if locked
         guard lockManager.isLocked(schedule.accessoryUUID) else {

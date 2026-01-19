@@ -124,7 +124,7 @@ struct HomeLockShortcuts: AppShortcutsProvider {
             intent: LockDeviceIntent(),
             phrases: [
                 "Lock \(\.$device) with \(.applicationName)",
-                "Lock \(\.$device) for \(\.$durationMinutes) minutes with \(.applicationName)",
+                "Lock a device with \(.applicationName)",
                 "Block \(\.$device) with \(.applicationName)"
             ],
             shortTitle: "Lock Device",

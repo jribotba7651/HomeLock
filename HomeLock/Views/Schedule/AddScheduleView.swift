@@ -12,7 +12,7 @@ import HomeKit
 struct AddScheduleView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @EnvironmentObject var homeKitService: HomeKitService
+    @ObservedObject private var homeKit = HomeKitService.shared
 
     @State private var selectedAccessory: HMAccessory?
     @State private var startTime = Calendar.current.date(from: DateComponents(hour: 21, minute: 0))!
@@ -31,7 +31,7 @@ struct AddScheduleView: View {
                 Section("Device") {
                     Picker("Select Device", selection: $selectedAccessory) {
                         Text("Choose...").tag(nil as HMAccessory?)
-                        ForEach(homeKitService.outlets, id: \.uniqueIdentifier) { accessory in
+                        ForEach(homeKit.outlets, id: \.uniqueIdentifier) { accessory in
                             Text(accessory.name).tag(accessory as HMAccessory?)
                         }
                     }

@@ -41,13 +41,9 @@ struct ContentView: View {
         }
         .onChange(of: homeKit.isAuthorized) { _, isAuthorized in
             if isAuthorized {
-                lockManager.configure(with: homeKit)
+                lockManager.configure()
                 lockManager.configure(modelContext: modelContext)
-                scheduleManager.configure(
-                    modelContext: modelContext,
-                    homeKitService: homeKit,
-                    lockManager: lockManager
-                )
+                scheduleManager.configure(modelContext: modelContext)
             }
         }
     }

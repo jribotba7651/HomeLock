@@ -124,7 +124,7 @@ class LockManager: ObservableObject {
         print("🧹 [LockManager] Cleanup completed")
     }
 
-    func configure(with homeKitService: HomeKitService) {
+    func configure() {
         // Verificar locks expirados y triggers huérfanos al iniciar
         Task { [weak self] in
             await self?.checkExpiredLocks()
@@ -175,10 +175,7 @@ class LockManager: ObservableObject {
             return
         }
 
-        guard let homeKit = homeKitService else {
-            print("⚠️ [LockManager Sync] HomeKitService no disponible")
-            return
-        }
+        let homeKit = HomeKitService.shared
 
         isSyncing = true
         defer {
@@ -298,10 +295,7 @@ class LockManager: ObservableObject {
 
     /// Locks a device with the given parameters (Shortcuts entry point)
     func lockDevice(accessoryID: UUID, duration: TimeInterval?, lockedState: Bool = false) async throws {
-        guard let homeKit = homeKitService else {
-            print("❌ [LockManager] HomeKitService not configured")
-            return
-        }
+        let homeKit = HomeKitService.shared
 
         guard let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) else {
             print("❌ [LockManager] Accessory \(accessoryID) not found")
@@ -389,8 +383,8 @@ class LockManager: ObservableObject {
         }
 
         // Eliminar trigger de HomeKit (best effort, polling is the real enforcement)
-        if let homeKit = homeKitService,
-           let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
+        let homeKit = HomeKitService.shared
+        if let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
             do {
                 try await homeKit.removeLockTrigger(triggerID: config.triggerID, for: accessory)
             } catch {
@@ -517,10 +511,7 @@ class LockManager: ObservableObject {
             return
         }
 
-        guard let homeKit = homeKitService else {
-            print("⚠️ [LockManager] HomeKitService no disponible")
-            return
-        }
+        let homeKit = HomeKitService.shared
 
         // Capturar locks al inicio para evitar mutación durante iteración
         let currentLocks = locks
@@ -616,8 +607,8 @@ class LockManager: ObservableObject {
                     await NotificationManager.shared.cancelLockExpirationNotification(accessoryID: expiredLock.accessoryID)
 
                     // Limpiar HomeKit trigger directamente (sin usar removeLock ya que no está en self.locks)
-                    if let homeKit = self.homeKitService,
-                       let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == expiredLock.accessoryID }) {
+                    let homeKit = HomeKitService.shared
+                    if let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == expiredLock.accessoryID }) {
                         do {
                             try await homeKit.removeLockTrigger(triggerID: expiredLock.triggerID, for: accessory)
                             print("✅ [LockManager] Trigger removido para lock expirado: \(expiredLock.accessoryName)")
@@ -733,7 +724,7 @@ class LockManager: ObservableObject {
     }
 
     private func cleanupOrphanedTriggers() async {
-        guard let homeKit = homeKitService else { return }
+        let homeKit = HomeKitService.shared
 
         print("🧹 [LockManager] Iniciando limpieza de triggers huérfanos...")
 
