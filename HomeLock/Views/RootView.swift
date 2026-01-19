@@ -11,43 +11,42 @@ struct RootView: View {
 
     @ObservedObject private var storeManager = StoreManager.shared
     @State private var showPaywall = false
-    @State private var isReady = false
+    @State private var hasCheckedPaywall = false
 
     var body: some View {
-        ZStack {
-            // Main content
-            SplashContainer {
-                AuthenticationView {
-                    ContentView()
-                }
-            }
-            .preferredColorScheme(
-                appearanceMode == 0 ? nil :
-                appearanceMode == 1 ? .light : .dark
-            )
-
-            // Paywall overlay - show on top of everything
-            if showPaywall {
-                PaywallView(isPresented: $showPaywall)
-                    .zIndex(999)
+        SplashContainer {
+            AuthenticationView {
+                ContentView()
             }
         }
-        .onAppear {
-            guard !isReady else { return }
-            isReady = true
+        .preferredColorScheme(
+            appearanceMode == 0 ? nil :
+            appearanceMode == 1 ? .light : .dark
+        )
+        .fullScreenCover(isPresented: $showPaywall) {
+            PaywallView(isPresented: $showPaywall)
+        }
+        .task {
+            // Wait for StoreManager and View Hierarchy to stabilize
+            // This is crucial for fullScreenCover to trigger correctly on app start
+            try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
+            
+            guard !hasCheckedPaywall else { return }
+            hasCheckedPaywall = true
 
-            // Increment launch count
+            // Increment launch count only once
             appLaunchCount += 1
-            print("💰 [Paywall] ==================")
-            print("💰 [Paywall] Launch count: \(appLaunchCount)")
-            print("💰 [Paywall] isPro: \(storeManager.isPro)")
-
-            // Check if should show
+            
+            print("💰 [Paywall] Checking... Launch Count: \(appLaunchCount), isPro: \(storeManager.isPro)")
+            
+            // Logic: 1st launch OR every 5 launches if NOT pro
             if !storeManager.isPro && (appLaunchCount == 1 || appLaunchCount % 5 == 0) {
-                print("💰 [Paywall] SHOWING PAYWALL!")
-                showPaywall = true
+                print("💰 [Paywall] Logic triggered: TRUE")
+                withAnimation {
+                    showPaywall = true
+                }
             } else {
-                print("💰 [Paywall] Not showing this time")
+                print("💰 [Paywall] Logic triggered: FALSE")
             }
         }
     }

@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import StoreKit
 
 struct SettingsView: View {
     @StateObject private var homeKit = HomeKitService()
@@ -315,7 +316,7 @@ struct SettingsView: View {
     }
 
     private func loadActiveTriggerCount() async {
-        await homeKit.requestAuthorization()
+        homeKit.requestAuthorization()
         activeTriggerCount = homeKit.countHomeLockAutomations()
     }
 
@@ -357,7 +358,7 @@ struct SettingsView: View {
 
     private var priceText: String {
         if let product = storeManager.products.first {
-            return "Upgrade for \(product.displayPrice)"
+            return "Upgrade to \(product.displayName)"
         }
         return "Upgrade to Pro"
     }
