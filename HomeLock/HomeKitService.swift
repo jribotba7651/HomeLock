@@ -92,7 +92,26 @@ class HomeKitService: NSObject, ObservableObject {
             throw HomeKitError.serviceNotFound
         }
 
-        try await powerState.writeValue(on)
+        do {
+            try await powerState.writeValue(on)
+        } catch let error as NSError where error.domain == "HMErrorDomain" && error.code == 74 {
+            // Code 74 can be transient during concurrent HomeKit operations — retry after delay
+            print("⚠️ [HomeLock] Write failed (Code 74) for \(accessory.name), retrying...")
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            do {
+                try await powerState.writeValue(on)
+            } catch let retryError as NSError where retryError.domain == "HMErrorDomain" && retryError.code == 74 {
+                // Retry also failed — try Brightness fallback for dimmers
+                guard let brightness = service.characteristics.first(where: {
+                    $0.characteristicType == HMCharacteristicTypeBrightness
+                }) else {
+                    throw retryError
+                }
+                let brightnessValue = on ? 100 : 0
+                try await brightness.writeValue(brightnessValue)
+                print("🔒 [HomeLock] Fallback: Brightness set to \(brightnessValue) for \(accessory.name)")
+            }
+        }
     }
 
     // MARK: - Lock Trigger Management
@@ -108,125 +127,65 @@ class HomeKitService: NSObject, ObservableObject {
     ///   - lockedState: El estado al que debe mantenerse (true = on, false = off)
     /// - Returns: El UUID del trigger creado
     func createLockTrigger(for accessory: HMAccessory, lockedState: Bool) async throws -> UUID {
-        print("🔒 [HomeLock] ========== CREANDO LOCK TRIGGER ==========")
-        print("🔒 [HomeLock] Dispositivo: \(accessory.name)")
-        print("🔒 [HomeLock] Estado a mantener: \(lockedState ? "ON" : "OFF")")
+        print("🔒 [HomeLock] Creando trigger para \(accessory.name) -> \(lockedState ? "ON" : "OFF")")
 
         guard let home = getHome(for: accessory) else {
-            print("❌ [HomeLock] ERROR: No se encontró el home para el accesorio")
             throw HomeKitError.homeNotFound
         }
-        print("🔒 [HomeLock] Home encontrado: \(home.name)")
 
         guard let service = getControllableService(for: accessory) else {
-            print("❌ [HomeLock] ERROR: No se encontró servicio controlable")
             throw HomeKitError.serviceNotFound
         }
-        print("🔒 [HomeLock] Servicio: \(service.serviceType) - \(service.name)")
 
         guard let powerState = getPowerStateCharacteristic(for: service) else {
-            print("❌ [HomeLock] ERROR: No se encontró PowerState characteristic")
             throw HomeKitError.serviceNotFound
         }
-        print("🔒 [HomeLock] PowerState characteristic encontrado: \(powerState.characteristicType)")
-        print("🔒 [HomeLock] Valor actual: \(String(describing: powerState.value))")
 
         let triggerName = "HomeLock_\(accessory.uniqueIdentifier.uuidString)"
         let actionSetPrefix = "HomeLock_Revert_"
-        print("🔒 [HomeLock] Nombre del trigger: \(triggerName)")
 
-        // ========== PROTECCIÓN CONTRA MEMORY LEAK ==========
-        // Contar triggers HomeLock existentes
-        let homeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
-        let homeLockActionSets = home.actionSets.filter { $0.name.hasPrefix("HomeLock_") }
-        print("🧹 [HomeLock] ANTES - HomeLock triggers: \(homeLockTriggers.count), ActionSets: \(homeLockActionSets.count)")
-
-        // PROTECCIÓN: Si hay demasiados triggers, limpiar todo
-        let totalTriggers = home.triggers.count
-        if totalTriggers > 50 || homeLockTriggers.count > 20 {
-            print("🚨 [HomeLock] MEMORY LEAK DETECTADO! Total triggers: \(totalTriggers), HomeLock: \(homeLockTriggers.count)")
-            print("🧹 [HomeLock] Ejecutando limpieza masiva...")
-
-            // Limpiar TODOS los triggers HomeLock
+        // Only run mass cleanup if there's actually a leak (>50 total or >20 HomeLock triggers)
+        let homeLockTriggerCount = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }.count
+        if home.triggers.count > 50 || homeLockTriggerCount > 20 {
+            print("🚨 [HomeLock] Trigger leak detected (\(homeLockTriggerCount)), cleaning up...")
+            let homeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
             for trigger in homeLockTriggers {
-                print("🧹 [HomeLock] Eliminando trigger: \(trigger.name)")
-
-                // Eliminar action sets del trigger
                 if let eventTrigger = trigger as? HMEventTrigger {
                     for actionSet in eventTrigger.actionSets where actionSet.name.hasPrefix("HomeLock_") {
                         try? await home.removeActionSet(actionSet)
                     }
                 }
-
                 try? await home.removeTrigger(trigger)
             }
-
-            // Limpiar action sets huérfanos
-            for actionSet in homeLockActionSets {
+            for actionSet in home.actionSets.filter({ $0.name.hasPrefix("HomeLock_") }) {
                 try? await home.removeActionSet(actionSet)
             }
-
-            print("🧹 [HomeLock] Limpieza masiva completada")
-
-            // Pausa para estabilizar HomeKit
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 segundo
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
 
-        print("🔒 [HomeLock] Todos los triggers en home (\(home.triggers.count)):")
-        for existingTrigger in home.triggers {
-            let isHomeLock = existingTrigger.name.hasPrefix("HomeLock_") ? "🔒" : "  "
-            print("   \(isHomeLock) \(existingTrigger.name): enabled=\(existingTrigger.isEnabled)")
-        }
-
-        // Eliminar TODOS los triggers HomeLock_ para este dispositivo
+        // Remove existing triggers for THIS device only
         let triggersToRemove = home.triggers.filter { $0.name == triggerName }
-        print("🧹 [HomeLock] Triggers a eliminar para este dispositivo: \(triggersToRemove.count)")
-
         for trigger in triggersToRemove {
-            print("🧹 [HomeLock] Eliminando trigger: \(trigger.name)...")
-
-            // Primero eliminar action sets asociados
             if let eventTrigger = trigger as? HMEventTrigger {
                 for actionSet in eventTrigger.actionSets where actionSet.name.hasPrefix(actionSetPrefix) {
-                    print("🧹 [HomeLock] Eliminando ActionSet asociado: \(actionSet.name)")
                     try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                         home.removeActionSet(actionSet) { error in
-                            if let error {
-                                print("⚠️ [HomeLock] Error eliminando ActionSet: \(error.localizedDescription)")
-                            }
                             continuation.resume()
                         }
                     }
                 }
             }
-
-            // Luego eliminar el trigger
-            do {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    home.removeTrigger(trigger) { error in
-                        if let error {
-                            print("❌ [HomeLock] Error eliminando trigger: \(error.localizedDescription)")
-                            continuation.resume(throwing: error)
-                        } else {
-                            print("✅ [HomeLock] Trigger eliminado: \(trigger.name)")
-                            continuation.resume()
-                        }
-                    }
+            try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                home.removeTrigger(trigger) { error in
+                    continuation.resume()
                 }
-            } catch {
-                print("⚠️ [HomeLock] Continuando a pesar del error: \(error.localizedDescription)")
             }
         }
 
-        // También limpiar ActionSets huérfanos de este dispositivo
-        let orphanedActionSets = home.actionSets.filter {
-            $0.name.hasPrefix(actionSetPrefix) && $0.actions.isEmpty == false
-        }
-        for actionSet in orphanedActionSets {
-            // Verificar si el actionSet pertenece a esta characteristic
+        // Clean orphaned action sets for this device
+        for actionSet in home.actionSets.filter({ $0.name.hasPrefix(actionSetPrefix) }) {
             if let action = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
                action.characteristic.service?.accessory?.uniqueIdentifier == accessory.uniqueIdentifier {
-                print("🧹 [HomeLock] Eliminando ActionSet huérfano: \(actionSet.name)")
                 try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                     home.removeActionSet(actionSet) { error in
                         continuation.resume()
@@ -235,122 +194,51 @@ class HomeKitService: NSObject, ObservableObject {
             }
         }
 
-        // Pequeña pausa para que HomeKit sincronice y el Bridge Lutron respire
-        let isLutron = isLutronDevice(accessory)
-        let delayNanoseconds: UInt64 = isLutron ? 1_000_000_000 : 500_000_000 // 1s para Lutron, 0.5s para otros
-        print("🔒 [HomeLock] Pausa de estabilización: \(Double(delayNanoseconds) / 1_000_000_000)s (Lutron: \(isLutron))")
-        try? await Task.sleep(nanoseconds: delayNanoseconds)
+        // Stabilization pause — longer for Lutron bridges
+        let stabilizationDelay: UInt64 = isLutronDevice(accessory) ? 1_000_000_000 : 500_000_000
+        try? await Task.sleep(nanoseconds: stabilizationDelay)
 
-        // Verificar limpieza
-        let remainingHomeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
-        print("🧹 [HomeLock] DESPUÉS - HomeLock triggers: \(remainingHomeLockTriggers.count)")
-
-        // Crear el evento: cuando PowerState cambia al estado opuesto al bloqueado
+        // Create the event: fires when PowerState changes to the unwanted state
         let unwantedState = !lockedState
-        print("🔒 [HomeLock] Estado NO deseado (trigger value): \(unwantedState)")
-
         let event = HMCharacteristicEvent(characteristic: powerState, triggerValue: unwantedState as NSCopying)
-        print("🔒 [HomeLock] Evento creado: HMCharacteristicEvent")
-        print("   - Characteristic: \(event.characteristic.characteristicType)")
-        print("   - Trigger value: \(String(describing: event.triggerValue))")
 
-        // Crear la acción: revertir al estado bloqueado
-        print("🔒 [HomeLock] Creando ActionSet...")
+        // Create the action set to revert to locked state
         let actionSet = try await createRevertActionSet(home: home, characteristic: powerState, targetState: lockedState, accessoryName: accessory.name)
-        print("✅ [HomeLock] ActionSet creado: \(actionSet.name)")
-        print("   - Actions: \(actionSet.actions.count)")
-        for action in actionSet.actions {
-            if let writeAction = action as? HMCharacteristicWriteAction<NSCopying> {
-                print("   - WriteAction: target=\(String(describing: writeAction.targetValue))")
-            }
-        }
 
-        // Crear el trigger con el evento y la acción
-        print("🔒 [HomeLock] Creando HMEventTrigger...")
+        // Create and configure trigger
         let trigger = HMEventTrigger(name: triggerName, events: [event], predicate: nil)
 
-        // Agregar trigger al home
-        print("🔒 [HomeLock] Agregando trigger al home...")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             home.addTrigger(trigger) { error in
                 if let error {
-                    print("❌ [HomeLock] Error agregando trigger: \(error)")
                     continuation.resume(throwing: error)
                 } else {
-                    print("✅ [HomeLock] Trigger agregado al home")
                     continuation.resume()
                 }
             }
         }
 
-        // Agregar action set al trigger
-        print("🔒 [HomeLock] Agregando ActionSet al trigger...")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             trigger.addActionSet(actionSet) { error in
                 if let error {
-                    print("❌ [HomeLock] Error agregando ActionSet: \(error)")
                     continuation.resume(throwing: error)
                 } else {
-                    print("✅ [HomeLock] ActionSet agregado al trigger")
                     continuation.resume()
                 }
             }
         }
 
-        // Habilitar el trigger
-        print("🔒 [HomeLock] Habilitando trigger...")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             trigger.enable(true) { error in
                 if let error {
-                    print("❌ [HomeLock] Error habilitando trigger: \(error)")
                     continuation.resume(throwing: error)
                 } else {
-                    print("✅ [HomeLock] Trigger habilitado")
                     continuation.resume()
                 }
             }
         }
 
-        // Delay adicional para Lutron después de habilitar para evitar spam al bridge
-        if isLutron {
-            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms extra
-        }
-
-        // Verificación final
-        print("🔒 [HomeLock] ========== VERIFICACIÓN FINAL ==========")
-        print("🔒 [HomeLock] Trigger UUID: \(trigger.uniqueIdentifier)")
-        print("🔒 [HomeLock] Trigger enabled: \(trigger.isEnabled)")
-        print("🔒 [HomeLock] Trigger events: \(trigger.events.count)")
-        for (index, evt) in trigger.events.enumerated() {
-            print("   - Event \(index): \(type(of: evt))")
-            if let charEvent = evt as? HMCharacteristicEvent<NSCopying> {
-                print("     Characteristic: \(charEvent.characteristic.characteristicType)")
-                print("     Trigger value: \(String(describing: charEvent.triggerValue))")
-            }
-        }
-        print("🔒 [HomeLock] Trigger actionSets: \(trigger.actionSets.count)")
-        for actionSet in trigger.actionSets {
-            print("   - ActionSet: \(actionSet.name), actions: \(actionSet.actions.count)")
-        }
-
-        // Verificar que el trigger está en home.triggers
-        print("🔒 [HomeLock] Triggers en home después de crear:")
-        for t in home.triggers {
-            let enabled = t.isEnabled ? "✅" : "❌"
-            let isHomeLock = t.name.hasPrefix("HomeLock_") ? "🔒" : "  "
-            print("   \(enabled) \(isHomeLock) \(t.name)")
-        }
-
-        // Conteo final
-        let finalHomeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
-        let finalHomeLockActionSets = home.actionSets.filter { $0.name.hasPrefix("HomeLock_") }
-        print("📊 [HomeLock] CONTEO FINAL - HomeLock triggers: \(finalHomeLockTriggers.count), ActionSets: \(finalHomeLockActionSets.count)")
-
-        // Verificar que el trigger recién creado está en la lista
-        let triggerExists = home.triggers.contains(where: { $0.uniqueIdentifier == trigger.uniqueIdentifier })
-        print("📊 [HomeLock] ¿Trigger existe en home.triggers? \(triggerExists ? "✅ SÍ" : "❌ NO")")
-
-        print("🔒 [HomeLock] ========== LOCK TRIGGER CREADO EXITOSAMENTE ==========")
+        print("🔒 [HomeLock] Trigger creado para \(accessory.name) (UUID: \(trigger.uniqueIdentifier))")
 
         return trigger.uniqueIdentifier
     }
