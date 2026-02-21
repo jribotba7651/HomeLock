@@ -55,6 +55,10 @@
 "Unknown error" = "Unknown error";
 "Could not lock the device: %@" = "Could not lock the device: %@";
 
+// Lutron Compatibility
+"Not compatible" = "Not compatible";
+"Lutron Caséta devices are not compatible with HomeLock due to bridge communication limitations." = "Lutron Caséta devices are not compatible with HomeLock due to bridge communication limitations.";
+
 // Cleanup
 "Remove all HomeLock automations" = "Remove all HomeLock automations";
 "Remove all HomeLock automations?" = "Remove all HomeLock automations?";

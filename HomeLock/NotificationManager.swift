@@ -23,7 +23,7 @@ class NotificationManager: ObservableObject {
         let releaseAction = UNNotificationAction(
             identifier: "RELEASE_LOCK",
             title: String(localized: "Release Lock"),
-            options: [.foreground]
+            options: []  // No .foreground — allows background execution without opening app
         )
 
         let keepAction = UNNotificationAction(

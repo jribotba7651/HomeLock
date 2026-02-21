@@ -702,6 +702,21 @@ class LockManager: ObservableObject {
         }
     }
 
+    /// Public method for checking expired locks when app returns to foreground
+    func checkAndCleanExpiredLocks() async {
+        print("🔄 [LockManager] Checking for expired locks (app returned to foreground)")
+        var expiredCount = 0
+        for (accessoryID, config) in locks where config.isExpired {
+            print("⏰ [LockManager] Found expired lock: \(config.accessoryName)")
+            logEvent(.expired, accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+            await removeLock(for: accessoryID, logEvent: false)
+            expiredCount += 1
+        }
+        if expiredCount > 0 {
+            print("✅ [LockManager] Auto-released \(expiredCount) expired lock(s)")
+        }
+    }
+
 
     /// Public method for background task to cleanup expired locks
     func cleanupExpiredLocks() async {
