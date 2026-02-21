@@ -47,17 +47,16 @@ class LockManager: ObservableObject {
     private var modelContext: ModelContext?
     private var homeKitCancellable: AnyCancellable?
     private var syncTimer: Timer?
-    private let syncInterval: TimeInterval = 120.0 // Sync every 2 minutes (reduced from 30s to protect bridge stability)
+    private let syncInterval: TimeInterval = 30.0 // Sync every 30 seconds (increased from 10)
 
     // Background Task Management
     nonisolated static let backgroundTaskIdentifier = "com.jibaroenaluna.homelock.expireLock"
 
     // MARK: - Polling (Fallback for HMEventTrigger)
     private var pollingTimer: Timer?
-    private let pollingInterval: TimeInterval = 15.0 // Reduced frequency to protect bridge stability (was 8s)
+    private let pollingInterval: TimeInterval = 8.0 // Check every 8 seconds (increased from 5)
     private var isPolling = false
     private var isEnforcing = false // Prevent overlapping enforcement
-    private var isConfigured = false
 
     private init() {
         print("🏗️ [LockManager] Initializing singleton instance")
@@ -126,9 +125,6 @@ class LockManager: ObservableObject {
     }
 
     func configure() {
-        guard !isConfigured else { return }
-        isConfigured = true
-
         // Verificar locks expirados y triggers huérfanos al iniciar
         Task { [weak self] in
             await self?.checkExpiredLocks()
@@ -143,7 +139,7 @@ class LockManager: ObservableObject {
         // Suscribirse a actualizaciones de HomeKit para sincronización multi-usuario
         homeKitCancellable = HomeKitService.shared.$homesLastUpdated
             .dropFirst()
-            .debounce(for: .seconds(10), scheduler: RunLoop.main) // Debounce 10s to avoid burst syncs saturating bridges
+            .debounce(for: .seconds(3), scheduler: RunLoop.main) // Debounce increased to 3s
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     await self?.syncFromHomeKit()
@@ -174,7 +170,10 @@ class LockManager: ObservableObject {
     /// Sincroniza el estado local con los triggers de HomeKit
     /// Esto permite detectar locks creados/eliminados por otros usuarios del hogar
     func syncFromHomeKit() async {
-        guard !isSyncing else { return }
+        guard !isSyncing else {
+            print("⏭️ [LockManager Sync] Ya hay una sincronización en progreso")
+            return
+        }
 
         let homeKit = HomeKitService.shared
 
@@ -183,6 +182,8 @@ class LockManager: ObservableObject {
             isSyncing = false
             lastSyncTime = Date()
         }
+
+        print("🔄 [LockManager Sync] Iniciando sincronización desde HomeKit...")
 
         // Obtener todos los triggers activos de HomeKit
         let detectedLocks = homeKit.getAllActiveLockTriggers()
@@ -381,23 +382,13 @@ class LockManager: ObservableObject {
             await NotificationManager.shared.cancelLockExpirationNotification(accessoryID: accessoryID)
         }
 
-        // Eliminar trigger de HomeKit y restaurar estado del dispositivo
+        // Eliminar trigger de HomeKit (best effort, polling is the real enforcement)
         let homeKit = HomeKitService.shared
         if let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
-            // 1. Remove the enforcement trigger
             do {
                 try await homeKit.removeLockTrigger(triggerID: config.triggerID, for: accessory)
             } catch {
                 print("⚠️ [LockManager] Error eliminando trigger: \(error)")
-            }
-
-            // 2. Restore device to opposite of locked state (reactivate)
-            let restoredState = !config.lockedState
-            do {
-                try await homeKit.setAccessoryPower(accessory, on: restoredState)
-                print("🔓 [LockManager] Dispositivo restaurado a \(restoredState ? "ON" : "OFF")")
-            } catch {
-                print("⚠️ [LockManager] Error restaurando estado del dispositivo: \(error)")
             }
         }
 
