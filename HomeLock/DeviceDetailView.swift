@@ -254,7 +254,6 @@ struct DeviceDetailView: View {
             lockToState = state
         }
         isLoading = false
-        lockManager.configure()
     }
 
     private func lockDevice() async {
@@ -278,11 +277,13 @@ struct DeviceDetailView: View {
 
         await MainActor.run {
             isLocking = true
+            lockManager.isUserOperating = true
         }
 
         defer {
             Task { @MainActor in
                 isLocking = false
+                lockManager.isUserOperating = false
             }
         }
 
