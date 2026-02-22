@@ -83,7 +83,6 @@ class NotificationManager: ObservableObject {
         content.title = String(localized: "Lock Expired")
         content.body = String(localized: "\(accessoryName) lock has expired. Tap to unlock the device.")
         content.sound = .default
-        content.badge = 1
         content.categoryIdentifier = "LOCK_EXPIRED"
         content.userInfo = [
             "accessoryID": accessoryID.uuidString,

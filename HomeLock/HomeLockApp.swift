@@ -44,6 +44,8 @@ struct HomeLockApp: App {
         .modelContainer(modelContainer)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
+                // Clear notification badge
+                UNUserNotificationCenter.current().setBadgeCount(0)
                 Task { @MainActor in
                     await LockManager.shared.checkAndCleanExpiredLocks()
                 }
