@@ -189,6 +189,19 @@ struct SettingsView: View {
                     Text("Configure PIN and biometric authentication.")
                 }
 
+                // MARK: - Family Section
+                Section {
+                    NavigationLink {
+                        FamilySettingsView()
+                    } label: {
+                        Label("Family Sharing", systemImage: "person.2.fill")
+                    }
+                } header: {
+                    Text("Family")
+                } footer: {
+                    Text("Sync devices with family members via iCloud.")
+                }
+
                 // MARK: - Notifications Section
                 Section {
                     HStack {

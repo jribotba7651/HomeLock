@@ -11,12 +11,12 @@ import SwiftUI
 
 @Model
 final class LockEvent {
-    var id: UUID
-    var accessoryUUID: UUID
-    var accessoryName: String
-    var eventType: String  // "locked", "unlocked", "expired", "tamper"
-    var timestamp: Date
-    var duration: TimeInterval?  // Solo para "locked"
+    var id: UUID = UUID()
+    var accessoryUUID: UUID = UUID()
+    var accessoryName: String = ""
+    var eventType: String = "" // "locked", "unlocked", "expired", "tamper"
+    var timestamp: Date = Date()
+    var duration: TimeInterval? // Solo para "locked"
     var notes: String?
 
     init(accessoryUUID: UUID, accessoryName: String, eventType: String, duration: TimeInterval? = nil, notes: String? = nil) {

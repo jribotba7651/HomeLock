@@ -21,6 +21,9 @@ class StoreManager: ObservableObject {
     private var transactionListener: Task<Void, Error>?
 
     private init() {
+        // Force Pro for development and testing
+        self.isPro = true
+        
         // Start listening for transactions
         transactionListener = Task.detached {
             for await result in StoreTransaction.updates {

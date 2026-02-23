@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>UIRequiresFullScreen</key>
+	<true/>
 	<key>NSHomeKitUsageDescription</key>
 	<string>HomeLock necesita acceso a HomeKit para controlar tus enchufes inteligentes y aplicar límites de tiempo.</string>
 	<key>NSFaceIDUsageDescription</key>
@@ -11,7 +13,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
-		<string>background-processing</string>
+		<string>processing</string>
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>

@@ -10,14 +10,14 @@ import SwiftData
 
 @Model
 final class LockSchedule {
-    var id: UUID
-    var accessoryUUID: UUID
-    var accessoryName: String
-    var startTime: Date  // Solo hora/minutos (usar DateComponents)
-    var endTime: Date
-    var daysOfWeek: [Int]  // 1=Sunday, 2=Monday, ... 7=Saturday
-    var isEnabled: Bool
-    var createdAt: Date
+    var id: UUID = UUID()
+    var accessoryUUID: UUID = UUID()
+    var accessoryName: String = ""
+    var startTime: Date = Date()
+    var endTime: Date = Date()
+    var daysOfWeek: [Int] = [] // 1=Sunday, 2=Monday, ... 7=Saturday
+    var isEnabled: Bool = true
+    var createdAt: Date = Date()
 
     init(accessoryUUID: UUID, accessoryName: String, startTime: Date, endTime: Date, daysOfWeek: [Int]) {
         self.id = UUID()
