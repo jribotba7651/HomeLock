@@ -33,6 +33,10 @@ struct LockConfiguration: Codable, Identifiable {
     }
 }
 
+enum LockManagerError: Error {
+    case accessoryNotFound
+}
+
 /// Maneja la persistencia de locks usando UserDefaults
 @MainActor
 class LockManager: ObservableObject {
@@ -143,6 +147,14 @@ class LockManager: ObservableObject {
         // Iniciar polling si hay locks activos
         if !locks.isEmpty {
             startPolling()
+        }
+
+        // Initialize CloudKit Family Sync
+        Task {
+            if StoreManager.shared.isPro, let home = HomeKitService.shared.homes.first {
+                try? await CloudKitService.shared.setupSharedZone(for: home.uniqueIdentifier)
+                _ = try? await CloudKitService.shared.fetchLocks(for: home)
+            }
         }
 
         // Suscribirse a actualizaciones de HomeKit para sincronización multi-usuario
@@ -314,10 +326,13 @@ class LockManager: ObservableObject {
         defer { isUserOperating = false }
 
         let homeKit = HomeKitService.shared
+        
+        // 0. Asegurar que HomeKit está cargado (crítico para Atajos en background)
+        await homeKit.waitServiceReady()
 
         guard let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) else {
             print("❌ [LockManager] Accessory \(accessoryID) not found")
-            return
+            throw LockManagerError.accessoryNotFound
         }
 
         // 1. Set power state
@@ -334,6 +349,20 @@ class LockManager: ObservableObject {
             lockedState: lockedState,
             duration: duration
         )
+        
+        // 4. Sincronizar con CloudKit para la familia
+        if StoreManager.shared.isPro, let home = accessory.home {
+            let expiresAt = duration.map { Date().addingTimeInterval($0) }
+            Task {
+                try? await CloudKitService.shared.createSharedLock(
+                    accessory: accessory,
+                    home: home,
+                    triggerUUID: triggerID,
+                    expiresAt: expiresAt,
+                    lockedByName: UIDevice.current.name
+                )
+            }
+        }
     }
 
     /// Agrega un nuevo lock
@@ -411,6 +440,8 @@ class LockManager: ObservableObject {
 
         // Eliminar trigger de HomeKit (best effort, polling is the real enforcement)
         let homeKit = HomeKitService.shared
+        await homeKit.waitServiceReady()
+        
         if let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
             do {
                 try await homeKit.removeLockTrigger(triggerID: config.triggerID, for: accessory)
@@ -422,6 +453,13 @@ class LockManager: ObservableObject {
         // Eliminar de la lista
         locks.removeValue(forKey: accessoryID)
         saveLocks()
+
+        // Sincronizar con CloudKit para la familia
+        if StoreManager.shared.isPro {
+            Task {
+                try? await CloudKitService.shared.deleteLock(for: accessoryID)
+            }
+        }
 
         // Detener polling si no hay más locks
         stopPollingIfNeeded()
@@ -606,8 +644,9 @@ class LockManager: ObservableObject {
                 }
             }
             
-            // Pausa mínima entre accesorios para evitar ráfagas al bridge (especialmente Lutron)
-            let interDeviceDelay = isLutron ? 300_000_000 : 100_000_000 // 300ms vs 100ms
+            // Pausa mínima entre accesorios para evitar ráfagas al bridge o al Wi-Fi
+            // Lutron (Bridge) necesita más tiempo, pero Kasa (Wi-Fi) también agradece un respiro
+            let interDeviceDelay = isLutron ? 400_000_000 : 200_000_000 // 400ms vs 200ms
             try? await Task.sleep(nanoseconds: UInt64(interDeviceDelay))
         }
     }

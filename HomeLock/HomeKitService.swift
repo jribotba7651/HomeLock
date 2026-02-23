@@ -25,6 +25,12 @@ class HomeKitService: NSObject, ObservableObject {
         return manufacturer.contains("lutron")
     }
 
+    /// Detecta si un accesorio es de la marca TP-Link/Kasa
+    func isKasaDevice(_ accessory: HMAccessory) -> Bool {
+        let manufacturer = accessory.manufacturer?.lowercased() ?? ""
+        return manufacturer.contains("tp-link") || manufacturer.contains("kasa")
+    }
+
     private var homeManager: HMHomeManager?
 
     override init() {
@@ -32,42 +38,44 @@ class HomeKitService: NSObject, ObservableObject {
     }
 
     func requestAuthorization() {
-        homeManager = HMHomeManager()
-        homeManager?.delegate = self
+        if homeManager == nil {
+            homeManager = HMHomeManager()
+            homeManager?.delegate = self
+        }
     }
 
-    /// Filtra accesorios que tienen servicios de tipo outlet o switch
-    /// Filtra accesorios que tienen servicios de tipo outlet o switch
+    /// Espera a que HomeKit termine de cargar los hogares
+    func waitServiceReady() async {
+        if homeManager == nil {
+            requestAuthorization()
+        }
+        
+        // Si ya hay hogares, no esperamos
+        if !homes.isEmpty { return }
+        
+        print("☁️ [HomeKitService] Esperando a que HomeKit esté listo...")
+        
+        // Reintentos durante 5 segundos
+        for _ in 0..<10 {
+            if !homes.isEmpty { break }
+            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+        }
+    }
+
+    /// Filtra accesorios que tienen servicios controlables por encendido/apagado
     private func filterOutlets(from accessories: [HMAccessory]) -> [HMAccessory] {
         accessories.filter { accessory in
-            let serviceTypes = accessory.services.map { $0.serviceType }
-            return !HomeKitService.shouldFilter(manufacturer: accessory.manufacturer, services: serviceTypes)
+            // Broaden search: any accessory that has at least one service with a PowerState characteristic
+            accessory.services.contains { service in
+                service.characteristics.contains { $0.characteristicType == HMCharacteristicTypePowerState }
+            }
         }
-    }
-
-    /// Lógica central de filtrado (testable)
-    static func shouldFilter(manufacturer: String?, services: [String]) -> Bool {
-        // No longer filtering Lutron devices. Instead, we implement proper cleanup.
-        
-        // Debe tener al menos uno de estos servicios para NO ser filtrado (asumiendo que queremos incluirlos)
-        // Pero la lógica original era: incluir si tiene uno de estos.
-        // Entonces devolvemos FALSE si tiene uno de estos (para que filter no lo descarte)
-        // Y TRUE si NO tiene ninguno (para filtrarlo).
-        let hasRequiredService = services.contains { type in
-            type == HMServiceTypeOutlet ||
-            type == HMServiceTypeSwitch ||
-            type == HMServiceTypeLightbulb
-        }
-        
-        return !hasRequiredService
     }
 
     /// Obtiene el servicio controlable (outlet/switch/light) de un accesorio
     func getControllableService(for accessory: HMAccessory) -> HMService? {
         accessory.services.first { service in
-            service.serviceType == HMServiceTypeOutlet ||
-            service.serviceType == HMServiceTypeSwitch ||
-            service.serviceType == HMServiceTypeLightbulb
+            service.characteristics.contains { $0.characteristicType == HMCharacteristicTypePowerState }
         }
     }
 
@@ -84,19 +92,17 @@ class HomeKitService: NSObject, ObservableObject {
         }
 
         do {
+            // Intentar lectura fresca con un timeout implícito corto
             try await powerState.readValue()
             return powerState.value as? Bool
-        } catch let error as NSError {
-            if error.domain == "HMErrorDomain" && error.code == 80 {
-                // Expected: Background access not allowed
-                return nil
-            } else if error.domain == "HMErrorDomain" && error.code == 74 {
-                // Expected: Device doesn't support reading power state
-                return nil
-            } else {
-                print("Error reading power state: \(error)")
-                return nil
+        } catch {
+            // Si la lectura falla (timeout o dispositivo ocupado), usamos el valor cacheado
+            // Esto es vital para dispositivos Wi-Fi como Kasa que pueden tardar en responder
+            if let cachedValue = powerState.value as? Bool {
+                print("⚠️ [HomeKit] Usando valor cacheado para \(accessory.name) tras fallo de lectura")
+                return cachedValue
             }
+            return nil
         }
     }
 
@@ -157,9 +163,10 @@ class HomeKitService: NSObject, ObservableObject {
         print("🧹 [HomeLock] ANTES - HomeLock triggers: \(homeLockTriggers.count), ActionSets: \(homeLockActionSets.count)")
 
         // PROTECCIÓN: Si hay demasiados triggers, limpiar todo
+        // Aumentamos límites para hogares con muchos dispositivos Kasa
         let totalTriggers = home.triggers.count
-        if totalTriggers > 50 || homeLockTriggers.count > 20 {
-            print("🚨 [HomeLock] MEMORY LEAK DETECTADO! Total triggers: \(totalTriggers), HomeLock: \(homeLockTriggers.count)")
+        if totalTriggers > 100 || homeLockTriggers.count > 50 {
+            print("🚨 [HomeLock] PROTECCIÓN DE LÍMITES! Total triggers: \(totalTriggers), HomeLock: \(homeLockTriggers.count)")
             print("🧹 [HomeLock] Ejecutando limpieza masiva...")
 
             // Limpiar TODOS los triggers HomeLock
@@ -170,15 +177,6 @@ class HomeKitService: NSObject, ObservableObject {
                 if let eventTrigger = trigger as? HMEventTrigger {
                     for actionSet in eventTrigger.actionSets where actionSet.name.hasPrefix("HomeLock_") {
                         try? await home.removeActionSet(actionSet)
-                    }
-                }
-
-                // CLEANUP: Disable notifications for the characteristic to release bridge resources
-                if let eventTrigger = trigger as? HMEventTrigger {
-                    for event in eventTrigger.events {
-                        if let charEvent = event as? HMCharacteristicEvent<NSCopying> {
-                            try? await charEvent.characteristic.enableNotification(false)
-                        }
                     }
                 }
 
@@ -224,15 +222,7 @@ class HomeKitService: NSObject, ObservableObject {
                 }
             }
 
-            // CLEANUP: Disable notifications for the characteristic to release bridge resources
-            if let eventTrigger = trigger as? HMEventTrigger {
-                for event in eventTrigger.events {
-                    if let charEvent = event as? HMCharacteristicEvent<NSCopying> {
-                        try? await charEvent.characteristic.enableNotification(false)
-                    }
-                }
-            }
-            // Eliminar el trigger
+            // Luego eliminar el trigger
             do {
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                     home.removeTrigger(trigger) { error in
@@ -564,15 +554,6 @@ class HomeKitService: NSObject, ObservableObject {
                                     }
                                     continuation.resume()
                                 }
-                            }
-                        }
-                    }
-
-                    // CLEANUP: Disable notifications for the characteristic to release bridge resources
-                    if let eventTrigger = trigger as? HMEventTrigger {
-                        for event in eventTrigger.events {
-                            if let charEvent = event as? HMCharacteristicEvent<NSCopying> {
-                                try? await charEvent.characteristic.enableNotification(false)
                             }
                         }
                     }

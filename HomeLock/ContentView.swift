@@ -85,6 +85,7 @@ struct DashboardView: View {
                     )
                 } else {
                     List {
+                        SharedLocksView()
                         ForEach(groupedAccessories.keys.sorted(), id: \.self) { roomName in
                             Section {
                                 ForEach(groupedAccessories[roomName] ?? [], id: \.uniqueIdentifier) { accessory in
@@ -140,6 +141,9 @@ struct DashboardView: View {
                         Button {
                             Task {
                                 await lockManager.syncFromHomeKit()
+                                if StoreManager.shared.isPro, let home = homeKit.homes.first {
+                                    _ = try? await CloudKitService.shared.fetchLocks(for: home)
+                                }
                             }
                         } label: {
                             if lockManager.isSyncing {

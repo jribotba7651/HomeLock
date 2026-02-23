@@ -9,24 +9,42 @@ import SwiftUI
 import SwiftData
 import BackgroundTasks
 import UserNotifications
+import CloudKit
 
 @main
 struct HomeLockApp: App {
-    @Environment(\.scenePhase) private var scenePhase
     let modelContainer: ModelContainer
 
     init() {
-        // Initialize SwiftData ModelContainer
+        // 1. Definir el esquema
         let schema = Schema([
             LockEvent.self,
             LockSchedule.self,
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        
+        // 2. Crear la configuración compatible con las últimas APIs de Apple
+        let modelConfiguration = ModelConfiguration(
+            schema: schema,
+            isStoredInMemoryOnly: false,
+            cloudKitDatabase: .private("iCloud.com.jibaroenlaluna.HomeLock")
+        )
 
+        // 3. Inicializar el contenedor con manejo de errores resiliente
         do {
             modelContainer = try ModelContainer(for: schema, configurations: [modelConfiguration])
+            print("📦 [SwiftData] ModelContainer inicializado con éxito")
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            print("🚨 [SwiftData] No se pudo cargar la base de datos: \(error.localizedDescription)")
+            
+            // Intento de recuperación: Usar memoria temporal como red de seguridad
+            // Esto asegura que el app siempre suba, incluso si el disco o iCloud fallan.
+            let fallbackConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            do {
+                modelContainer = try ModelContainer(for: schema, configurations: [fallbackConfig])
+                print("🧠 [SwiftData] Usando memoria temporal por seguridad")
+            } catch {
+                fatalError("Error crítico: Fallo total en la inicialización de datos.")
+            }
         }
 
         registerBackgroundTasks()
@@ -37,17 +55,22 @@ struct HomeLockApp: App {
         HomeKitService.shared.requestAuthorization()
     }
 
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some Scene {
         WindowGroup {
             RootView()
+                .onOpenURL { url in
+                    // Handle deep links if any
+                }
         }
         .modelContainer(modelContainer)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                // Clear notification badge
-                UNUserNotificationCenter.current().setBadgeCount(0)
-                Task { @MainActor in
-                    await LockManager.shared.checkAndCleanExpiredLocks()
+                print("📱 [HomeLockApp] App became active, clearing badge count")
+                Task {
+                     try? await UNUserNotificationCenter.current().setBadgeCount(0)
                 }
             }
         }
@@ -135,5 +158,24 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .list, .sound, .badge])
+    }
+}
+
+// MARK: - App Delegate for CloudKit Sharing
+class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        userDidAcceptCloudKitShareWith shareMetadata: CKShare.Metadata
+    ) {
+        print("☁️ [AppDelegate] Accepted CloudKit share for container: \(shareMetadata.containerIdentifier)")
+        
+        Task {
+            do {
+                try await CloudKitService.shared.acceptShareMetadata(shareMetadata)
+                print("✅ [AppDelegate] CloudKit share accepted successfully")
+            } catch {
+                print("❌ [AppDelegate] Failed to accept CloudKit share: \(error.localizedDescription)")
+            }
+        }
     }
 }
