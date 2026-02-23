@@ -5,6 +5,10 @@
 
 import SwiftUI
 import StoreKit
+import Combine
+
+// Use type alias to avoid ambiguity with SwiftUI.Transaction
+typealias StoreTransaction = StoreKit.Transaction
 
 @MainActor
 class StoreManager: ObservableObject {
@@ -19,7 +23,7 @@ class StoreManager: ObservableObject {
     private init() {
         // Start listening for transactions
         transactionListener = Task.detached {
-            for await result in Transaction.updates {
+            for await result in StoreTransaction.updates {
                 await self.handleTransaction(result)
             }
         }
@@ -73,16 +77,12 @@ class StoreManager: ObservableObject {
     }
 
     func checkEntitlement() async {
-        do {
-            for await result in Transaction.currentEntitlements {
-                await handleTransaction(result)
-            }
-        } catch {
-            print("❌ [StoreKit] Failed to check entitlements: \(error)")
+        for await result in StoreTransaction.currentEntitlements {
+            await handleTransaction(result)
         }
     }
 
-    private func handleTransaction(_ result: VerificationResult<Transaction>) async {
+    private func handleTransaction(_ result: VerificationResult<StoreTransaction>) async {
         switch result {
         case .verified(let transaction):
             if transaction.productID == productId {

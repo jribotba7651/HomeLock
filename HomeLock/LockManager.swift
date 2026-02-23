@@ -9,6 +9,7 @@ import Foundation
 import Combine
 import HomeKit
 import BackgroundTasks
+import SwiftData
 
 /// Configuración de un lock persistido
 struct LockConfiguration: Codable, Identifiable {
@@ -38,19 +39,26 @@ class LockManager: ObservableObject {
     static let shared = LockManager()
 
     @Published private(set) var locks: [UUID: LockConfiguration] = [:] // accessoryID -> config
+    @Published var lastSyncTime: Date?
+    @Published var isSyncing: Bool = false
 
     private let userDefaultsKey = "HomeLock_ActiveLocks"
     private var expirationTimers: [UUID: Timer] = [:]
-    private var homeKitService: HomeKitService?
+    private var modelContext: ModelContext?
+    private var homeKitCancellable: AnyCancellable?
+    private var syncTimer: Timer?
+    private let syncInterval: TimeInterval = 30.0 // Sync every 30 seconds (increased from 10)
 
     // Background Task Management
     nonisolated static let backgroundTaskIdentifier = "com.jibaroenaluna.homelock.expireLock"
 
     // MARK: - Polling (Fallback for HMEventTrigger)
     private var pollingTimer: Timer?
-    private let pollingInterval: TimeInterval = 5.0 // Check every 5 seconds
+    private let pollingInterval: TimeInterval = 8.0 // Check every 8 seconds (increased from 5)
     private var isPolling = false
     private var isEnforcing = false // Prevent overlapping enforcement
+    private var isConfigured = false // Prevent multiple configure() calls
+    var isUserOperating = false // Pause polling during user-initiated lock/unlock
 
     private init() {
         print("🏗️ [LockManager] Initializing singleton instance")
@@ -90,6 +98,17 @@ class LockManager: ObservableObject {
             isPolling = false
         }
 
+        // Invalidar sync timer
+        if syncTimer != nil {
+            print("🧹 [LockManager] Invalidating sync timer")
+            syncTimer?.invalidate()
+            syncTimer = nil
+        }
+
+        // Cancelar suscripción a HomeKit
+        homeKitCancellable?.cancel()
+        homeKitCancellable = nil
+
         // Invalidar todos los timers de expiración
         let timerCount = expirationTimers.count
         if timerCount > 0 {
@@ -104,15 +123,16 @@ class LockManager: ObservableObject {
         print("🧹 [LockManager] Canceling background tasks")
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.backgroundTaskIdentifier)
 
+        isConfigured = false
         print("🧹 [LockManager] Cleanup completed")
     }
 
-    /// Configura el servicio de HomeKit para poder eliminar triggers
-    func configure(with homeKitService: HomeKitService) {
-        // Solo configurar si es diferente o es la primera vez
-        guard self.homeKitService !== homeKitService else { return }
-
-        self.homeKitService = homeKitService
+    func configure() {
+        guard !isConfigured else {
+            print("⏭️ [LockManager] Already configured, skipping")
+            return
+        }
+        isConfigured = true
 
         // Verificar locks expirados y triggers huérfanos al iniciar
         Task { [weak self] in
@@ -124,9 +144,197 @@ class LockManager: ObservableObject {
         if !locks.isEmpty {
             startPolling()
         }
+
+        // Suscribirse a actualizaciones de HomeKit para sincronización multi-usuario
+        homeKitCancellable = HomeKitService.shared.$homesLastUpdated
+            .dropFirst()
+            .debounce(for: .seconds(3), scheduler: RunLoop.main) // Debounce increased to 3s
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.syncFromHomeKit()
+                }
+            }
+
+        // Iniciar sincronización periódica
+        startSyncTimer()
+
+        // Sincronizar inmediatamente
+        Task { [weak self] in
+            await self?.syncFromHomeKit()
+        }
+    }
+
+    // MARK: - Multi-User Sync
+
+    private func startSyncTimer() {
+        syncTimer?.invalidate()
+        syncTimer = Timer.scheduledTimer(withTimeInterval: syncInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.syncFromHomeKit()
+            }
+        }
+        print("🔄 [LockManager] Sync timer iniciado (cada \(syncInterval)s)")
+    }
+
+    /// Sincroniza el estado local con los triggers de HomeKit
+    /// Esto permite detectar locks creados/eliminados por otros usuarios del hogar
+    func syncFromHomeKit() async {
+        guard !isSyncing else {
+            print("⏭️ [LockManager Sync] Ya hay una sincronización en progreso")
+            return
+        }
+
+        let homeKit = HomeKitService.shared
+
+        isSyncing = true
+        defer {
+            isSyncing = false
+            lastSyncTime = Date()
+        }
+
+        print("🔄 [LockManager Sync] Iniciando sincronización desde HomeKit...")
+
+        // Obtener todos los triggers activos de HomeKit
+        let detectedLocks = homeKit.getAllActiveLockTriggers()
+        let detectedAccessoryIDs = Set(detectedLocks.map { $0.accessoryUUID })
+        let localAccessoryIDs = Set(locks.keys)
+
+        // 1. Detectar NUEVOS locks (creados por otros usuarios)
+        for detected in detectedLocks {
+            if !localAccessoryIDs.contains(detected.accessoryUUID) {
+                print("🆕 [LockManager Sync] Nuevo lock detectado desde HomeKit: \(detected.accessoryName)")
+
+                // Agregar a locks locales (sin crear trigger, ya existe)
+                let config = LockConfiguration(
+                    id: UUID(),
+                    accessoryID: detected.accessoryUUID,
+                    accessoryName: detected.accessoryName,
+                    triggerID: detected.triggerUUID,
+                    lockedState: detected.lockedState,
+                    createdAt: Date(),
+                    expiresAt: nil // Los locks de otros usuarios no tienen expiración conocida
+                )
+
+                locks[detected.accessoryUUID] = config
+                saveLocks()
+
+                // Notificar al usuario
+                await NotificationManager.shared.showExternalLockNotification(
+                    accessoryName: detected.accessoryName,
+                    isLocked: true
+                )
+
+                // Log event
+                logEvent(.locked, accessoryUUID: detected.accessoryUUID, accessoryName: detected.accessoryName, notes: "Locked by another home member")
+
+                // Iniciar polling si no estaba activo
+                if !isPolling {
+                    startPolling()
+                }
+            }
+        }
+
+        // 2. Detectar locks ELIMINADOS (desbloqueados por otros usuarios)
+        for accessoryID in localAccessoryIDs {
+            if !detectedAccessoryIDs.contains(accessoryID) {
+                if let config = locks[accessoryID] {
+                    // No borrar locks recien creados, el trigger puede no haberse sincronizado aun
+                    let lockAge = Date().timeIntervalSince(config.createdAt)
+                    guard lockAge > 60 else {
+                        print("⏭️ [LockManager Sync] Skipping recently created lock: \(config.accessoryName) (age: \(Int(lockAge))s)")
+                        continue
+                    }
+                    print("🔓 [LockManager Sync] Lock eliminado desde HomeKit: \(config.accessoryName)")
+
+                    // Cancelar timer de expiración si existe
+                    expirationTimers[accessoryID]?.invalidate()
+                    expirationTimers.removeValue(forKey: accessoryID)
+
+                    // Cancelar notificación de expiración
+                    await NotificationManager.shared.cancelLockExpirationNotification(accessoryID: accessoryID)
+
+                    // Notificar al usuario
+                    await NotificationManager.shared.showExternalLockNotification(
+                        accessoryName: config.accessoryName,
+                        isLocked: false
+                    )
+
+                    // Log event
+                    logEvent(.unlocked, accessoryUUID: accessoryID, accessoryName: config.accessoryName, notes: "Unlocked by another home member")
+
+                    // Eliminar de locks locales
+                    locks.removeValue(forKey: accessoryID)
+                    saveLocks()
+                }
+            }
+        }
+
+        // Detener polling si no hay locks
+        stopPollingIfNeeded()
+
+        print("🔄 [LockManager Sync] Sincronización completada. Locks activos: \(locks.count)")
+    }
+
+    /// Configura el ModelContext para el logging de eventos
+    func configure(modelContext: ModelContext) {
+        self.modelContext = modelContext
+    }
+
+    // MARK: - Event Logging
+
+    /// Logs a lock event to the history
+    func logEvent(_ type: LockEventType, accessoryUUID: UUID, accessoryName: String, duration: TimeInterval? = nil, notes: String? = nil) {
+        guard let modelContext = modelContext else {
+            print("⚠️ [LockManager] ModelContext not available for logging")
+            return
+        }
+
+        let event = LockEvent(
+            accessoryUUID: accessoryUUID,
+            accessoryName: accessoryName,
+            eventType: type.rawValue,
+            duration: duration,
+            notes: notes
+        )
+        modelContext.insert(event)
+
+        print("📝 [LockManager] Logged event: \(type.rawValue) for \(accessoryName)")
+    }
+
+    /// Logs a tamper attempt (device state changed while locked)
+    func logTamperAttempt(accessoryUUID: UUID, accessoryName: String) {
+        logEvent(.tamper, accessoryUUID: accessoryUUID, accessoryName: accessoryName, notes: "State change attempt blocked")
     }
 
     // MARK: - Public API
+
+    /// Locks a device with the given parameters (Shortcuts entry point)
+    func lockDevice(accessoryID: UUID, duration: TimeInterval?, lockedState: Bool = false) async throws {
+        isUserOperating = true
+        defer { isUserOperating = false }
+
+        let homeKit = HomeKitService.shared
+
+        guard let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) else {
+            print("❌ [LockManager] Accessory \(accessoryID) not found")
+            return
+        }
+
+        // 1. Set power state
+        try await homeKit.setAccessoryPower(accessory, on: lockedState)
+        
+        // 2. Create trigger
+        let triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: lockedState)
+        
+        // 3. Add to local state
+        addLock(
+            accessoryID: accessoryID,
+            accessoryName: accessory.name,
+            triggerID: triggerID,
+            lockedState: lockedState,
+            duration: duration
+        )
+    }
 
     /// Agrega un nuevo lock
     func addLock(
@@ -175,11 +383,20 @@ class LockManager: ObservableObject {
         // Iniciar polling
         startPolling()
 
+        // Log the lock event
+        logEvent(.locked, accessoryUUID: accessoryID, accessoryName: accessoryName, duration: duration)
+
         print("🔒 [LockManager] Lock agregado para \(accessoryName), expira: \(expiresAt?.description ?? "nunca")")
     }
 
     /// Elimina un lock
-    func removeLock(for accessoryID: UUID) async {
+    /// - Parameters:
+    ///   - accessoryID: The accessory to unlock
+    ///   - logEvent: Whether to log the unlock event (set to false when called from expiration handling)
+    func removeLock(for accessoryID: UUID, logEvent: Bool = true) async {
+        isUserOperating = true
+        defer { isUserOperating = false }
+
         guard let config = locks[accessoryID] else { return }
 
         // Cancelar timer de expiración, background task y notificación
@@ -193,8 +410,8 @@ class LockManager: ObservableObject {
         }
 
         // Eliminar trigger de HomeKit (best effort, polling is the real enforcement)
-        if let homeKit = homeKitService,
-           let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
+        let homeKit = HomeKitService.shared
+        if let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
             do {
                 try await homeKit.removeLockTrigger(triggerID: config.triggerID, for: accessory)
             } catch {
@@ -208,6 +425,11 @@ class LockManager: ObservableObject {
 
         // Detener polling si no hay más locks
         stopPollingIfNeeded()
+
+        // Log the unlock event (unless called from expiration handling which logs its own event)
+        if logEvent {
+            self.logEvent(.unlocked, accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+        }
 
         print("🔓 [LockManager] Lock eliminado para \(config.accessoryName)")
     }
@@ -230,6 +452,14 @@ class LockManager: ObservableObject {
     func getLock(for accessoryID: UUID) -> LockConfiguration? {
         guard let config = locks[accessoryID], !config.isExpired else { return nil }
         return config
+    }
+
+    /// Returns the lock status and remaining time for an accessory (Shortcuts entry point)
+    func getLockStatus(accessoryID: UUID) -> (isLocked: Bool, remainingTime: TimeInterval?) {
+        guard let config = locks[accessoryID], !config.isExpired else {
+            return (false, nil)
+        }
+        return (true, config.timeRemaining)
     }
 
     // MARK: - Polling Enforcement
@@ -271,6 +501,10 @@ class LockManager: ObservableObject {
                     print("⏭️ [LockManager] Skipping poll - previous enforcement still running")
                     return
                 }
+                guard !self.isUserOperating else {
+                    print("⏭️ [LockManager] Skipping poll - user operation in progress")
+                    return
+                }
                 await self.enforceAllLocks()
             }
         }
@@ -304,6 +538,11 @@ class LockManager: ObservableObject {
     private func enforceAllLocks() async {
         // Prevent overlapping enforcement
         guard !isEnforcing else { return }
+        // Skip if user is actively locking/unlocking to avoid Code 74
+        guard !isUserOperating else {
+            print("⏭️ [LockManager] Skipping enforcement - user operation in progress")
+            return
+        }
         isEnforcing = true
         defer {
             isEnforcing = false
@@ -316,15 +555,21 @@ class LockManager: ObservableObject {
             return
         }
 
-        guard let homeKit = homeKitService else {
-            print("⚠️ [LockManager] HomeKitService no disponible")
-            return
-        }
+        let homeKit = HomeKitService.shared
 
         // Capturar locks al inicio para evitar mutación durante iteración
         let currentLocks = locks
 
         for (accessoryID, config) in currentLocks {
+            // Buscar el accesorio
+            guard let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) else {
+                print("⚠️ [LockManager] Accesorio no encontrado: \(config.accessoryName)")
+                continue
+            }
+
+            // Detectar si es Lutron para aplicar rate limiting
+            let isLutron = homeKit.isLutronDevice(accessory)
+
             // Verificar si expiró
             if config.isExpired {
                 print("⏰ [LockManager] Lock expirado durante polling: \(config.accessoryName)")
@@ -332,113 +577,113 @@ class LockManager: ObservableObject {
                 continue
             }
 
-            // Buscar el accesorio
-            guard let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) else {
-                print("⚠️ [LockManager] Accesorio no encontrado: \(config.accessoryName)")
-                continue
-            }
-
             // Leer estado actual (puede fallar en background)
             guard let currentState = await homeKit.isAccessoryOn(accessory) else {
-                // print("⚠️ [LockManager] No se pudo leer estado de: \(config.accessoryName)")
                 continue
             }
 
             // Verificar si el estado es el deseado
             if currentState != config.lockedState {
-                print("🚨 [LockManager] Estado incorrecto detectado!")
-                print("   Dispositivo: \(config.accessoryName)")
-                print("   Estado actual: \(currentState ? "ON" : "OFF")")
-                print("   Estado deseado: \(config.lockedState ? "ON" : "OFF")")
-                print("   ➡️ Revirtiendo...")
+                print("🚨 [LockManager] Estado incorrecto detectado en \(config.accessoryName)!")
+                
+                // Log tamper attempt
+                logTamperAttempt(accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+
+                // Show tamper notification
+                await NotificationManager.shared.showTamperNotification(accessoryName: config.accessoryName)
 
                 // Revertir al estado bloqueado
                 do {
                     try await homeKit.setAccessoryPower(accessory, on: config.lockedState)
                     print("✅ [LockManager] Revertido exitosamente a \(config.lockedState ? "ON" : "OFF")")
+                    
+                    // Delay extra si es Lutron para no saturar el bridge después de una acción
+                    if isLutron {
+                        try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+                    }
                 } catch {
                     print("❌ [LockManager] Error revirtiendo: \(error.localizedDescription)")
                 }
-            } else {
-                // Estado correcto, log silencioso
-                // print("✓ [LockManager] \(config.accessoryName): OK")
             }
+            
+            // Pausa mínima entre accesorios para evitar ráfagas al bridge (especialmente Lutron)
+            let interDeviceDelay = isLutron ? 300_000_000 : 100_000_000 // 300ms vs 100ms
+            try? await Task.sleep(nanoseconds: UInt64(interDeviceDelay))
         }
     }
 
     // MARK: - Persistence
 
-    nonisolated private func saveLocks() {
-        Task { @MainActor in
-            do {
-                let data = try JSONEncoder().encode(Array(locks.values))
-                UserDefaults.standard.set(data, forKey: userDefaultsKey)
-            } catch {
-                print("❌ [LockManager] Error guardando locks: \(error)")
-            }
+    private func saveLocks() {
+        do {
+            let data = try JSONEncoder().encode(Array(locks.values))
+            UserDefaults.standard.set(data, forKey: userDefaultsKey)
+            print("💾 [LockManager] Locks guardados: \(locks.count)")
+        } catch {
+            print("❌ [LockManager] Error guardando locks: \(error)")
         }
     }
 
-    nonisolated private func loadLocks() {
+    private func loadLocks() {
         guard let data = UserDefaults.standard.data(forKey: userDefaultsKey) else { return }
 
         do {
             let configs = try JSONDecoder().decode([LockConfiguration].self, from: data)
+            let expiredLocks = configs.filter { $0.isExpired }
+            let validLocks = configs.filter { !$0.isExpired }
 
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
+            // SINCRONO: locks disponibles inmediatamente para la UI
+            self.locks = Dictionary(uniqueKeysWithValues: validLocks.map { ($0.accessoryID, $0) })
 
-                // CRITICAL FIX: Separar locks válidos de expirados ANTES de asignar
-                let expiredLocks = configs.filter { $0.isExpired }
-                let validLocks = configs.filter { !$0.isExpired }
+            print("🔒 [LockManager] Cargando locks: Total=\(configs.count), Validos=\(validLocks.count), Expirados=\(expiredLocks.count)")
 
-                // Solo cargar locks válidos (no expirados)
-                self.locks = Dictionary(uniqueKeysWithValues: validLocks.map { ($0.accessoryID, $0) })
+            // SINCRONO: Re-programar expiration timers y background tasks
+            for config in validLocks {
+                if let expiresAt = config.expiresAt {
+                    scheduleExpiration(for: config.accessoryID, at: expiresAt)
+                    scheduleBackgroundTask(for: config.accessoryID, expiresAt: expiresAt)
+                }
+            }
 
-                print("🔒 [LockManager] Cargando locks: Total=\(configs.count), Válidos=\(validLocks.count), Expirados=\(expiredLocks.count)")
+            // SINCRONO: Guardar sin locks expirados
+            if !expiredLocks.isEmpty {
+                saveLocks()
+                print("💾 [LockManager] Guardado actualizado sin locks expirados")
+            }
 
-                // Limpiar locks expirados
-                for expiredLock in expiredLocks {
-                    print("🚨 [LockManager] Lock expirado detectado al cargar: \(expiredLock.accessoryName)")
+            // ASYNC (no critico): Limpiar triggers expirados y reprogramar notificaciones
+            if !expiredLocks.isEmpty || !validLocks.isEmpty {
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
 
-                    // Cancelar notificación
-                    await NotificationManager.shared.cancelLockExpirationNotification(accessoryID: expiredLock.accessoryID)
+                    for expiredLock in expiredLocks {
+                        print("🚨 [LockManager] Lock expirado detectado al cargar: \(expiredLock.accessoryName)")
+                        await NotificationManager.shared.cancelLockExpirationNotification(accessoryID: expiredLock.accessoryID)
 
-                    // Limpiar HomeKit trigger directamente (sin usar removeLock ya que no está en self.locks)
-                    if let homeKit = self.homeKitService,
-                       let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == expiredLock.accessoryID }) {
-                        do {
-                            try await homeKit.removeLockTrigger(triggerID: expiredLock.triggerID, for: accessory)
-                            print("✅ [LockManager] Trigger removido para lock expirado: \(expiredLock.accessoryName)")
-                        } catch {
-                            print("⚠️ [LockManager] Error eliminando trigger expirado: \(error)")
+                        let homeKit = HomeKitService.shared
+                        if let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == expiredLock.accessoryID }) {
+                            do {
+                                try await homeKit.removeLockTrigger(triggerID: expiredLock.triggerID, for: accessory)
+                                print("✅ [LockManager] Trigger removido para lock expirado: \(expiredLock.accessoryName)")
+                            } catch {
+                                print("⚠️ [LockManager] Error eliminando trigger expirado: \(error)")
+                            }
+                        }
+                    }
+
+                    for config in validLocks {
+                        if let expiresAt = config.expiresAt {
+                            await NotificationManager.shared.scheduleLockExpirationNotification(
+                                accessoryID: config.accessoryID,
+                                accessoryName: config.accessoryName,
+                                expiresAt: expiresAt
+                            )
                         }
                     }
                 }
-
-                // Re-programar timers, background tasks y notificaciones para locks válidos
-                for config in validLocks {
-                    if let expiresAt = config.expiresAt {
-                        self.scheduleExpiration(for: config.accessoryID, at: expiresAt)
-                        self.scheduleBackgroundTask(for: config.accessoryID, expiresAt: expiresAt)
-
-                        // Re-programar notificación
-                        await NotificationManager.shared.scheduleLockExpirationNotification(
-                            accessoryID: config.accessoryID,
-                            accessoryName: config.accessoryName,
-                            expiresAt: expiresAt
-                        )
-                    }
-                }
-
-                // Guardar solo locks válidos
-                if expiredLocks.count > 0 {
-                    self.saveLocks()
-                    print("💾 [LockManager] Guardado actualizado sin locks expirados")
-                }
-
-                print("🔒 [LockManager] Carga completada: \(self.locks.count) locks activos")
             }
+
+            print("🔒 [LockManager] Carga completada: \(self.locks.count) locks activos")
         } catch {
             print("❌ [LockManager] Error cargando locks: \(error)")
         }
@@ -483,16 +728,35 @@ class LockManager: ObservableObject {
         }
         print("⏰ [LockManager] Lock expirado para \(config.accessoryName)")
 
+        // Log the expiration event before removing the lock
+        logEvent(.expired, accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+
         // Limpiar timer inmediatamente
         expirationTimers[accessoryID]?.invalidate()
         expirationTimers.removeValue(forKey: accessoryID)
 
-        await removeLock(for: accessoryID)
+        await removeLock(for: accessoryID, logEvent: false)
     }
 
     private func checkExpiredLocks() async {
         for (accessoryID, config) in locks where config.isExpired {
-            await removeLock(for: accessoryID)
+            logEvent(.expired, accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+            await removeLock(for: accessoryID, logEvent: false)
+        }
+    }
+
+    /// Public method for checking expired locks when app returns to foreground
+    func checkAndCleanExpiredLocks() async {
+        print("🔄 [LockManager] Checking for expired locks (app returned to foreground)")
+        var expiredCount = 0
+        for (accessoryID, config) in locks where config.isExpired {
+            print("⏰ [LockManager] Found expired lock: \(config.accessoryName)")
+            logEvent(.expired, accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+            await removeLock(for: accessoryID, logEvent: false)
+            expiredCount += 1
+        }
+        if expiredCount > 0 {
+            print("✅ [LockManager] Auto-released \(expiredCount) expired lock(s)")
         }
     }
 
@@ -506,7 +770,8 @@ class LockManager: ObservableObject {
 
         for (accessoryID, config) in currentLocks where config.isExpired {
             print("🚨 [LockManager] Found expired lock in background: \(config.accessoryName)")
-            await removeLock(for: accessoryID)
+            logEvent(.expired, accessoryUUID: accessoryID, accessoryName: config.accessoryName)
+            await removeLock(for: accessoryID, logEvent: false)
             expiredCount += 1
         }
 
@@ -517,7 +782,7 @@ class LockManager: ObservableObject {
     }
 
     private func cleanupOrphanedTriggers() async {
-        guard let homeKit = homeKitService else { return }
+        let homeKit = HomeKitService.shared
 
         print("🧹 [LockManager] Iniciando limpieza de triggers huérfanos...")
 

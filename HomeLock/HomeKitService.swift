@@ -11,11 +11,19 @@ import Combine
 
 @MainActor
 class HomeKitService: NSObject, ObservableObject {
+    static let shared = HomeKitService()
+    
     @Published var homes: [HMHome] = []
     @Published var accessories: [HMAccessory] = []
     @Published var outlets: [HMAccessory] = []
     @Published var isAuthorized = false
     @Published var errorMessage: String?
+
+    /// Detecta si un accesorio es de la marca Lutron
+    func isLutronDevice(_ accessory: HMAccessory) -> Bool {
+        let manufacturer = accessory.manufacturer?.lowercased() ?? ""
+        return manufacturer.contains("lutron")
+    }
 
     private var homeManager: HMHomeManager?
 
@@ -259,8 +267,11 @@ class HomeKitService: NSObject, ObservableObject {
             }
         }
 
-        // Pequeña pausa para que HomeKit sincronice
-        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 segundos
+        // Pequeña pausa para que HomeKit sincronice y el Bridge Lutron respire
+        let isLutron = isLutronDevice(accessory)
+        let delayNanoseconds: UInt64 = isLutron ? 1_000_000_000 : 500_000_000 // 1s para Lutron, 0.5s para otros
+        print("🔒 [HomeLock] Pausa de estabilización: \(Double(delayNanoseconds) / 1_000_000_000)s (Lutron: \(isLutron))")
+        try? await Task.sleep(nanoseconds: delayNanoseconds)
 
         // Verificar limpieza
         let remainingHomeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
@@ -330,6 +341,11 @@ class HomeKitService: NSObject, ObservableObject {
                     continuation.resume()
                 }
             }
+        }
+
+        // Delay adicional para Lutron después de habilitar para evitar spam al bridge
+        if isLutron {
+            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms extra
         }
 
         // Verificación final
@@ -478,6 +494,11 @@ class HomeKitService: NSObject, ObservableObject {
                 }
             }
         }
+
+        // Delay extra para Lutron para dejar que el bridge procese la eliminación
+        if isLutronDevice(accessory) {
+            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+        }
     }
 
     /// Elimina un trigger de lock por nombre del accesorio
@@ -511,6 +532,11 @@ class HomeKitService: NSObject, ObservableObject {
                     continuation.resume()
                 }
             }
+        }
+
+        // Delay extra para Lutron
+        if isLutronDevice(accessory) {
+            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
         }
     }
 
@@ -606,6 +632,69 @@ class HomeKitService: NSObject, ObservableObject {
         }
         return count
     }
+
+    // MARK: - Multi-User Sync Support
+
+    /// Estructura para representar un lock detectado desde HomeKit
+    struct DetectedLock {
+        let accessoryUUID: UUID
+        let accessoryName: String
+        let triggerUUID: UUID
+        let lockedState: Bool
+        let isEnabled: Bool
+    }
+
+    /// Obtiene todos los triggers de HomeLock activos desde HomeKit
+    /// Esto permite sincronizar con locks creados por otros miembros del hogar
+    func getAllActiveLockTriggers() -> [DetectedLock] {
+        var detectedLocks: [DetectedLock] = []
+
+        for home in homes {
+            let homeLockTriggers = home.triggers.filter {
+                $0.name.hasPrefix("HomeLock_") && $0.isEnabled
+            }
+
+            for trigger in homeLockTriggers {
+                guard let eventTrigger = trigger as? HMEventTrigger else { continue }
+
+                // Extraer el UUID del accesorio del nombre del trigger
+                // Formato: HomeLock_{accessoryUUID}
+                let triggerName = trigger.name
+                let uuidString = triggerName.replacingOccurrences(of: "HomeLock_", with: "")
+                guard let accessoryUUID = UUID(uuidString: uuidString) else { continue }
+
+                // Buscar el accesorio
+                guard let accessory = home.accessories.first(where: { $0.uniqueIdentifier == accessoryUUID }) else { continue }
+
+                // Determinar el estado bloqueado desde el evento del trigger
+                var lockedState = true
+                if let characteristicEvent = eventTrigger.events.first as? HMCharacteristicEvent<NSCopying> {
+                    // El trigger se dispara cuando el estado cambia al valor NO deseado
+                    // Por lo tanto, el estado bloqueado es el opuesto
+                    if let triggerValue = characteristicEvent.triggerValue as? Bool {
+                        lockedState = !triggerValue
+                    }
+                }
+
+                let detected = DetectedLock(
+                    accessoryUUID: accessoryUUID,
+                    accessoryName: accessory.name,
+                    triggerUUID: trigger.uniqueIdentifier,
+                    lockedState: lockedState,
+                    isEnabled: trigger.isEnabled
+                )
+
+                detectedLocks.append(detected)
+                print("🔍 [HomeKit Sync] Trigger detectado: \(accessory.name) -> \(lockedState ? "ON" : "OFF")")
+            }
+        }
+
+        print("🔍 [HomeKit Sync] Total triggers detectados: \(detectedLocks.count)")
+        return detectedLocks
+    }
+
+    /// Publisher para notificar cambios en los homes
+    @Published var homesLastUpdated: Date = Date()
 }
 
 // MARK: - HMHomeManagerDelegate
@@ -614,6 +703,11 @@ extension HomeKitService: HMHomeManagerDelegate {
         Task { @MainActor in
             self.homes = manager.homes
             self.isAuthorized = true
+
+            // Set delegate for each home to receive trigger updates
+            for home in manager.homes {
+                home.delegate = self
+            }
 
             // Recolectar todos los accesorios de todos los homes
             var allAccessories: [HMAccessory] = []
@@ -625,35 +719,63 @@ extension HomeKitService: HMHomeManagerDelegate {
 
             print("🏠 [HomeKit] ========== HOMES ACTUALIZADOS ==========")
             print("🏠 [HomeKit] \(homes.count) homes, \(accessories.count) accessories, \(outlets.count) outlets/switches")
-
-            // Debug: listar todos los triggers existentes
-            for home in manager.homes {
-                print("🏠 [HomeKit] Home: \(home.name)")
-                print("   Triggers: \(home.triggers.count)")
-                for trigger in home.triggers {
-                    let enabled = trigger.isEnabled ? "✅" : "❌"
-                    print("   \(enabled) \(trigger.name) (UUID: \(trigger.uniqueIdentifier))")
-                    if let eventTrigger = trigger as? HMEventTrigger {
-                        print("      Events: \(eventTrigger.events.count)")
-                        for event in eventTrigger.events {
-                            if let charEvent = event as? HMCharacteristicEvent<NSCopying> {
-                                print("      - CharEvent: triggerValue=\(String(describing: charEvent.triggerValue))")
-                            }
-                        }
-                        print("      ActionSets: \(eventTrigger.actionSets.count)")
-                        for actionSet in eventTrigger.actionSets {
-                            print("      - \(actionSet.name): \(actionSet.actions.count) actions")
-                        }
-                    }
-                }
-                print("   ActionSets: \(home.actionSets.count)")
-                for actionSet in home.actionSets {
-                    if actionSet.name.hasPrefix("HomeLock") {
-                        print("   - \(actionSet.name): \(actionSet.actions.count) actions")
-                    }
-                }
-            }
             print("🏠 [HomeKit] ==========================================")
+
+            // Notify that homes were updated (for sync)
+            self.homesLastUpdated = Date()
+        }
+    }
+}
+
+// MARK: - HMHomeDelegate
+extension HomeKitService: HMHomeDelegate {
+    // Called when a trigger is added to the home (including by other users)
+    nonisolated func home(_ home: HMHome, didAdd trigger: HMTrigger) {
+        Task { @MainActor in
+            print("🔔 [HomeKit] Trigger added: \(trigger.name)")
+            if trigger.name.hasPrefix("HomeLock_") {
+                print("🔔 [HomeKit] HomeLock trigger detected from another device!")
+                self.homesLastUpdated = Date()
+            }
+        }
+    }
+
+    // Called when a trigger is removed from the home (including by other users)
+    nonisolated func home(_ home: HMHome, didRemove trigger: HMTrigger) {
+        Task { @MainActor in
+            print("🔔 [HomeKit] Trigger removed: \(trigger.name)")
+            if trigger.name.hasPrefix("HomeLock_") {
+                print("🔔 [HomeKit] HomeLock trigger removed from another device!")
+                self.homesLastUpdated = Date()
+            }
+        }
+    }
+
+    // Called when a trigger is updated
+    nonisolated func home(_ home: HMHome, didUpdate trigger: HMTrigger) {
+        Task { @MainActor in
+            print("🔔 [HomeKit] Trigger updated: \(trigger.name)")
+            if trigger.name.hasPrefix("HomeLock_") {
+                self.homesLastUpdated = Date()
+            }
+        }
+    }
+
+    // Called when an accessory is added
+    nonisolated func home(_ home: HMHome, didAdd accessory: HMAccessory) {
+        Task { @MainActor in
+            print("🔔 [HomeKit] Accessory added: \(accessory.name)")
+            self.accessories.append(accessory)
+            self.outlets = filterOutlets(from: self.accessories)
+        }
+    }
+
+    // Called when an accessory is removed
+    nonisolated func home(_ home: HMHome, didRemove accessory: HMAccessory) {
+        Task { @MainActor in
+            print("🔔 [HomeKit] Accessory removed: \(accessory.name)")
+            self.accessories.removeAll { $0.uniqueIdentifier == accessory.uniqueIdentifier }
+            self.outlets = filterOutlets(from: self.accessories)
         }
     }
 }

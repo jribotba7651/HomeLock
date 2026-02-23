@@ -6,31 +6,50 @@
 //
 
 import SwiftUI
+import SwiftData
 import BackgroundTasks
 import UserNotifications
 
 @main
 struct HomeLockApp: App {
-    @AppStorage("appearanceMode") var appearanceMode: Int = 0
-    @StateObject private var storeManager = StoreManager.shared
+    @Environment(\.scenePhase) private var scenePhase
+    let modelContainer: ModelContainer
 
     init() {
+        // Initialize SwiftData ModelContainer
+        let schema = Schema([
+            LockEvent.self,
+            LockSchedule.self,
+        ])
+        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+
+        do {
+            modelContainer = try ModelContainer(for: schema, configurations: [modelConfiguration])
+        } catch {
+            fatalError("Could not create ModelContainer: \(error)")
+        }
+
         registerBackgroundTasks()
         requestNotificationPermissions()
         setupNotificationDelegate()
+        
+        // Initialize HomeKit for background/Shortcuts support
+        HomeKitService.shared.requestAuthorization()
     }
 
     var body: some Scene {
         WindowGroup {
-            SplashContainer {
-                AuthenticationView {
-                    ContentView()
+            RootView()
+        }
+        .modelContainer(modelContainer)
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                // Clear notification badge
+                UNUserNotificationCenter.current().setBadgeCount(0)
+                Task { @MainActor in
+                    await LockManager.shared.checkAndCleanExpiredLocks()
                 }
             }
-            .preferredColorScheme(
-                appearanceMode == 0 ? nil :
-                appearanceMode == 1 ? .light : .dark
-            )
         }
     }
 
@@ -115,6 +134,6 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.alert, .sound, .badge])
+        completionHandler([.banner, .list, .sound, .badge])
     }
 }

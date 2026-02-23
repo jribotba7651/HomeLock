@@ -6,11 +6,54 @@
 //
 
 import SwiftUI
+import SwiftData
 import HomeKit
 
 struct ContentView: View {
-    @StateObject private var homeKit = HomeKitService()
+    @ObservedObject private var homeKit = HomeKitService.shared
     @ObservedObject private var lockManager = LockManager.shared
+    @ObservedObject private var scheduleManager = ScheduleManager.shared
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var selectedTab = 0
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            DashboardView(homeKit: homeKit, lockManager: lockManager)
+                .tabItem { Label("Home", systemImage: "house.fill") }
+                .tag(0)
+
+            ScheduleListView()
+                .environmentObject(homeKit)
+                .tabItem { Label("Schedule", systemImage: "calendar") }
+                .tag(1)
+
+            HistoryView()
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                .tag(2)
+
+            SettingsView()
+                .tabItem { Label("Settings", systemImage: "gear") }
+                .tag(3)
+        }
+        .onAppear {
+            homeKit.requestAuthorization()
+        }
+        .onChange(of: homeKit.isAuthorized) { _, isAuthorized in
+            if isAuthorized {
+                lockManager.configure()
+                lockManager.configure(modelContext: modelContext)
+                scheduleManager.configure(modelContext: modelContext)
+            }
+        }
+    }
+}
+
+// MARK: - Dashboard View (formerly main ContentView content)
+
+struct DashboardView: View {
+    @ObservedObject var homeKit: HomeKitService
+    @ObservedObject var lockManager: LockManager
 
     @State private var showingCleanupConfirmation = false
     @State private var isCleaningUp = false
@@ -92,13 +135,38 @@ struct ContentView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 16) {
-                        NavigationLink(destination: SettingsView()) {
-                            Image(systemName: "gearshape")
-                                .foregroundStyle(.blue)
+                    HStack(spacing: 12) {
+                        // Sync status indicator (tappable for manual sync)
+                        Button {
+                            Task {
+                                await lockManager.syncFromHomeKit()
+                            }
+                        } label: {
+                            if lockManager.isSyncing {
+                                HStack(spacing: 4) {
+                                    ProgressView()
+                                        .scaleEffect(0.6)
+                                    Text("Syncing")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else if let lastSync = lockManager.lastSyncTime {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .foregroundStyle(.green)
+                                    Text(lastSync, style: .relative)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                        .disabled(lockManager.isSyncing)
 
-                        HStack {
+                        // Device count
+                        HStack(spacing: 4) {
                             Image(systemName: homeKit.isAuthorized ? "checkmark.circle.fill" : "circle")
                                 .foregroundStyle(homeKit.isAuthorized ? .green : .secondary)
                             Text("\(homeKit.outlets.count)")
@@ -163,14 +231,6 @@ struct ContentView: View {
                 }
             }
         }
-        .onAppear {
-            homeKit.requestAuthorization()
-        }
-        .onChange(of: homeKit.isAuthorized) { _, isAuthorized in
-            if isAuthorized {
-                lockManager.configure(with: homeKit)
-            }
-        }
     }
 
     private func performCleanup() async {
@@ -192,7 +252,7 @@ struct ContentView: View {
         defer { isEmergencyUnlocking = false }
 
         let lockCount = lockManager.locks.count
-        print("🚨 [ContentView] Emergency unlock started for \(lockCount) locks")
+        print("🚨 [DashboardView] Emergency unlock started for \(lockCount) locks")
 
         // Remove all locks using LockManager
         for accessoryID in lockManager.locks.keys {
@@ -203,9 +263,11 @@ struct ContentView: View {
         await NotificationManager.shared.cancelAllLockExpirationNotifications()
 
         emergencyUnlockResult = lockCount
-        print("🚨 [ContentView] Emergency unlock completed for \(lockCount) locks")
+        print("🚨 [DashboardView] Emergency unlock completed for \(lockCount) locks")
     }
 }
+
+// MARK: - Accessory Row
 
 struct AccessoryRow: View {
     let accessory: HMAccessory
@@ -217,6 +279,18 @@ struct AccessoryRow: View {
 
     private var isLocked: Bool {
         lockManager.isLocked(accessory.uniqueIdentifier)
+    }
+
+    private var lockConfig: LockConfiguration? {
+        lockManager.getLock(for: accessory.uniqueIdentifier)
+    }
+
+    private var isExternalLock: Bool {
+        // A lock without expiration time that we didn't create is from another user
+        if let config = lockConfig {
+            return config.expiresAt == nil
+        }
+        return false
     }
 
     var body: some View {
@@ -241,9 +315,15 @@ struct AccessoryRow: View {
 
                     // Lock indicator
                     if isLocked {
-                        Image(systemName: "lock.fill")
-                            .foregroundStyle(.orange)
-                            .font(.caption2)
+                        HStack(spacing: 2) {
+                            Image(systemName: "lock.fill")
+                                .foregroundStyle(.orange)
+                            if isExternalLock {
+                                Image(systemName: "person.2.fill")
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                        .font(.caption2)
                     }
                 }
 
@@ -268,4 +348,5 @@ struct AccessoryRow: View {
 
 #Preview {
     ContentView()
+        .modelContainer(for: [LockEvent.self, LockSchedule.self], inMemory: true)
 }

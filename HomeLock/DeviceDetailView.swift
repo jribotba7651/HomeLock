@@ -108,7 +108,17 @@ struct DeviceDetailView: View {
 
             // MARK: - Lock Section
             Section {
-                if let config = lockConfig {
+                if homeKit.isLutronDevice(accessory) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(String(localized: "Not compatible"), systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.headline)
+                        Text(String(localized: "Lutron Caséta devices are not compatible with HomeLock due to bridge communication limitations."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                } else if let config = lockConfig {
                     LockedStatusView(
                         lockToState: config.lockedState,
                         lockEndTime: config.expiresAt,
@@ -250,7 +260,6 @@ struct DeviceDetailView: View {
             lockToState = state
         }
         isLoading = false
-        lockManager.configure(with: homeKit)
     }
 
     private func lockDevice() async {
@@ -274,11 +283,13 @@ struct DeviceDetailView: View {
 
         await MainActor.run {
             isLocking = true
+            lockManager.isUserOperating = true
         }
 
         defer {
             Task { @MainActor in
                 isLocking = false
+                lockManager.isUserOperating = false
             }
         }
 
