@@ -80,7 +80,7 @@ struct HomeLockApp: App {
         print("🎯 [HomeLockApp] Registering background task handler")
 
         BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: "com.jibaroenaluna.homelock.expireLock",
+            forTaskWithIdentifier: "com.jibaroenlaluna.homelock.expireLock",
             using: nil
         ) { task in
             print("🎯 [HomeLockApp] Background task triggered!")

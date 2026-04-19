@@ -17,20 +17,27 @@ class StoreManager: ObservableObject {
     @Published var isPro = false
     @Published var products: [Product] = []
 
-    private let productId = "com.jibaroenaluna.homelock.pro"
+    private let productId = "com.jibaroenlaluna.homelock.pro"
     private var transactionListener: Task<Void, Error>?
 
     private init() {
-        // Force Pro for development and testing
-        self.isPro = true
-        
+        // `isPro` arranca en `false` y solo se activa tras verificar una
+        // transacción firmada por Apple en `handleTransaction`. NO hardcodear
+        // `true` aquí — eso regala Pro a todo el mundo.
+        //
+        // Al arrancar la app hay una ventana breve (~100ms) en la que
+        // `isPro == false` mientras `checkEntitlement()` itera las
+        // `currentEntitlements`. Las vistas que leen `isPro` deben estar
+        // preparadas para ese flicker (ya lo están: muestran paywall y
+        // desaparece cuando el entitlement llega).
+
         // Start listening for transactions
         transactionListener = Task.detached {
             for await result in StoreTransaction.updates {
                 await self.handleTransaction(result)
             }
         }
-        
+
         Task {
             await checkEntitlement()
             await loadProducts()

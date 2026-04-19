@@ -17,7 +17,7 @@
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.jibaroenaluna.homelock.expireLock</string>
+		<string>com.jibaroenlaluna.homelock.expireLock</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>

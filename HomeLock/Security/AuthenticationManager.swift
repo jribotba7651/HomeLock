@@ -9,6 +9,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import LocalAuthentication
 
 class AuthenticationManager: ObservableObject {
     static let shared = AuthenticationManager()
@@ -102,13 +103,13 @@ class AuthenticationManager: ObservableObject {
             return .failure(.invalidPin)
         }
 
-        // Get stored PIN
-        guard let storedPIN = keychainManager.loadPIN() else {
+        // Verificación contra hash PBKDF2 guardado en Keychain.
+        // `verifyPIN` hace constant-time compare internamente.
+        guard keychainManager.isPINSet() else {
             return .failure(.authenticationFailed)
         }
 
-        // Check PIN
-        if pin == storedPIN {
+        if keychainManager.verifyPIN(pin) {
             // Successful authentication
             resetFailedAttempts()
             isAuthenticated = true
@@ -119,6 +120,39 @@ class AuthenticationManager: ObservableObject {
             // Failed authentication
             incrementFailedAttempts()
             return .failure(.pinIncorrect)
+        }
+    }
+
+    /// Requiere autenticación del dueño del dispositivo (Face ID / Touch ID
+    /// con passcode del device como fallback) para acciones sensibles ejecutadas
+    /// FUERA de la UI principal — por ejemplo desde un `AppIntent` de Siri /
+    /// Shortcuts o desde la acción de una notificación.
+    ///
+    /// Esto NO usa el PIN de HomeLock (los `AppIntent` no pueden presentar la
+    /// PINEntryView de forma fiable). Usa la autenticación del dueño del
+    /// device, que es la barrera que Apple recomienda para acciones sensibles
+    /// invocadas fuera del foreground.
+    ///
+    /// - Parameter reason: texto que se muestra en el prompt de Face ID.
+    /// - Returns: `true` si autenticó, `false` si canceló o falló.
+    func requireDeviceAuthForIntent(reason: String) async -> Bool {
+        let context = LAContext()
+        context.localizedCancelTitle = "Cancel"
+
+        var error: NSError?
+        // `.deviceOwnerAuthentication` = biometría + passcode del device como fallback.
+        // Usamos este (no `.deviceOwnerAuthenticationWithBiometrics`) para que
+        // el padre pueda autorizar aunque Face ID esté deshabilitado.
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+            print("🔐 [Auth] canEvaluatePolicy failed: \(error?.localizedDescription ?? "unknown")")
+            return false
+        }
+
+        do {
+            return try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
+        } catch {
+            print("🔐 [Auth] evaluatePolicy failed: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -198,14 +232,24 @@ class AuthenticationManager: ObservableObject {
 
     // MARK: - Persistence
 
+    /// Persiste el estado de lockout en Keychain. ANTES vivía en UserDefaults,
+    /// lo cual permitía bypass trivial: desinstalar + reinstalar borra
+    /// UserDefaults pero el PIN en Keychain sobrevive → contador reseteado a 0
+    /// y el atacante vuelve a tener 5 intentos. Moviéndolo a Keychain hacemos
+    /// que el lockout también sobreviva a reinstalaciones.
     private func saveLockoutState() {
-        UserDefaults.standard.set(failedAttempts, forKey: "HomeLock_FailedAttempts")
-        UserDefaults.standard.set(lockoutEndTime, forKey: "HomeLock_LockoutEndTime")
+        keychainManager.saveFailedAttempts(failedAttempts)
+        keychainManager.saveLockoutEndTime(lockoutEndTime)
+
+        // Legacy cleanup: si venimos de un build anterior con el estado en
+        // UserDefaults, lo borramos para que no quede basura.
+        UserDefaults.standard.removeObject(forKey: "HomeLock_FailedAttempts")
+        UserDefaults.standard.removeObject(forKey: "HomeLock_LockoutEndTime")
     }
 
     private func loadLockoutState() {
-        failedAttempts = UserDefaults.standard.integer(forKey: "HomeLock_FailedAttempts")
-        lockoutEndTime = UserDefaults.standard.object(forKey: "HomeLock_LockoutEndTime") as? Date
+        failedAttempts = keychainManager.loadFailedAttempts()
+        lockoutEndTime = keychainManager.loadLockoutEndTime()
 
         // Check if still locked out
         if let endTime = lockoutEndTime {

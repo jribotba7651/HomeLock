@@ -68,7 +68,7 @@ class CloudKitService: ObservableObject {
         let share = CKShare(rootRecord: rootRecord)
         share.publicPermission = .none // Solo invitados pueden verlo
         share[CKShare.SystemFieldKey.title] = "HomeLock Family"
-        share[CKShare.SystemFieldKey.shareType] = "com.jibaroenaluna.homelock.family"
+        share[CKShare.SystemFieldKey.shareType] = "com.jibaroenlaluna.homelock.family"
         
         let operation = CKModifyRecordsOperation(recordsToSave: [rootRecord, share])
         operation.qualityOfService = .userInitiated

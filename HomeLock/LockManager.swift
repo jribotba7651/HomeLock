@@ -64,7 +64,7 @@ class LockManager: ObservableObject {
     private let syncInterval: TimeInterval = 30.0 // Sync every 30 seconds (increased from 10)
 
     // Background Task Management
-    nonisolated static let backgroundTaskIdentifier = "com.jibaroenaluna.homelock.expireLock"
+    nonisolated static let backgroundTaskIdentifier = "com.jibaroenlaluna.homelock.expireLock"
 
     // MARK: - Polling (Fallback for HMEventTrigger)
     private var pollingTimer: Timer?
