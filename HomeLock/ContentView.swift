@@ -86,6 +86,9 @@ struct DashboardView: View {
                 } else {
                     List {
                         SharedLocksView()
+                        if homeKit.hiddenLutronCount > 0 {
+                            LutronHiddenBanner(count: homeKit.hiddenLutronCount)
+                        }
                         ForEach(groupedAccessories.keys.sorted(), id: \.self) { roomName in
                             Section {
                                 ForEach(groupedAccessories[roomName] ?? [], id: \.uniqueIdentifier) { accessory in
@@ -347,6 +350,45 @@ struct AccessoryRow: View {
             }
             isLoading = false
         }
+    }
+}
+
+// MARK: - Lutron Hidden Banner
+
+/// Banner informativo mostrado cuando hay accesorios Lutron ocultos por la
+/// política `ignoreLutronDevices`. Deja claro al usuario que la app conoce
+/// sus dispositivos — simplemente los excluye por inestabilidad del bridge.
+struct LutronHiddenBanner: View {
+    let count: Int
+    @AppStorage(HomeKitService.ignoreLutronDefaultsKey) private var ignoreLutronDevices: Bool = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("\(count) Lutron device\(count == 1 ? "" : "s") hidden")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+            }
+            Text("Lutron's HomeKit bridge loses connection when apps create many automations, which breaks locks silently. HomeLock hides Lutron devices by default to protect the rest of your home.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                ignoreLutronDevices = false
+                HomeKitService.shared.refreshOutlets()
+            } label: {
+                Text("Show anyway (not recommended)")
+                    .font(.caption)
+                    .fontWeight(.medium)
+            }
+            .buttonStyle(.borderless)
+            .padding(.top, 2)
+        }
+        .padding(.vertical, 6)
+        .listRowBackground(Color.orange.opacity(0.08))
     }
 }
 

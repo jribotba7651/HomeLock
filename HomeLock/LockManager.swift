@@ -33,8 +33,18 @@ struct LockConfiguration: Codable, Identifiable {
     }
 }
 
-enum LockManagerError: Error {
+enum LockManagerError: LocalizedError {
     case accessoryNotFound
+    case lutronNotSupported
+
+    var errorDescription: String? {
+        switch self {
+        case .accessoryNotFound:
+            return "Device not found."
+        case .lutronNotSupported:
+            return "Lutron devices are currently disabled in HomeLock because their HomeKit bridge loses connection too often, making locks unreliable. You can re-enable them from Settings → HomeKit if you're willing to accept this limitation."
+        }
+    }
 }
 
 /// Maneja la persistencia de locks usando UserDefaults
@@ -335,11 +345,30 @@ class LockManager: ObservableObject {
             throw LockManagerError.accessoryNotFound
         }
 
-        // 1. Set power state
-        try await homeKit.setAccessoryPower(accessory, on: lockedState)
-        
-        // 2. Create trigger
-        let triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: lockedState)
+        // Defensa en profundidad: aunque normalmente los Lutron ya vienen
+        // filtrados de `outlets`, un lock persistido o un Shortcut con UUID
+        // guardado podría aún intentar bloquearlos. Rechazamos explícitamente
+        // cuando la política es ignorarlos.
+        let isLutron = homeKit.isLutronDevice(accessory)
+        if HomeKitService.shouldIgnoreLutron && isLutron {
+            print("🚫 [LockManager] Rechazando bloqueo de dispositivo Lutron: \(accessory.name)")
+            throw LockManagerError.lutronNotSupported
+        }
+
+        // 1. Set power state + 2. Create trigger.
+        // Si el usuario optó por reactivar Lutron, cualquier escritura contra
+        // el bridge pasa por el gatekeeper serializado (ver
+        // LutronBridgeGatekeeper.swift para la justificación completa).
+        let triggerID: UUID
+        if isLutron {
+            triggerID = try await LutronBridgeGatekeeper.shared.run(for: accessory) {
+                try await homeKit.setAccessoryPower(accessory, on: lockedState)
+                return try await homeKit.createLockTrigger(for: accessory, lockedState: lockedState)
+            }
+        } else {
+            try await homeKit.setAccessoryPower(accessory, on: lockedState)
+            triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: lockedState)
+        }
         
         // 3. Add to local state
         addLock(
@@ -608,6 +637,14 @@ class LockManager: ObservableObject {
             // Detectar si es Lutron para aplicar rate limiting
             let isLutron = homeKit.isLutronDevice(accessory)
 
+            // Si el usuario pidió ignorar Lutron, NO hacemos enforcement para
+            // evitar el loop de escrituras que tira el bridge. El trigger en
+            // HomeKit sigue vigente pero no reintentamos desde la app.
+            if isLutron && HomeKitService.shouldIgnoreLutron {
+                print("🚫 [LockManager] Saltando enforcement de Lutron (ignoreLutronDevices=true): \(config.accessoryName)")
+                continue
+            }
+
             // Verificar si expiró
             if config.isExpired {
                 print("⏰ [LockManager] Lock expirado durante polling: \(config.accessoryName)")
@@ -615,30 +652,41 @@ class LockManager: ObservableObject {
                 continue
             }
 
-            // Leer estado actual (puede fallar en background)
-            guard let currentState = await homeKit.isAccessoryOn(accessory) else {
+            // Leer estado actual. Para Lutron opt-in, la lectura también
+            // cuenta como "operación contra bridge" y debe pasar por el
+            // gatekeeper para respetar el gap mínimo.
+            let currentStateOpt: Bool?
+            if isLutron {
+                currentStateOpt = await LutronBridgeGatekeeper.shared.run(for: accessory) {
+                    await homeKit.isAccessoryOn(accessory)
+                }
+            } else {
+                currentStateOpt = await homeKit.isAccessoryOn(accessory)
+            }
+            guard let currentState = currentStateOpt else {
                 continue
             }
 
             // Verificar si el estado es el deseado
             if currentState != config.lockedState {
                 print("🚨 [LockManager] Estado incorrecto detectado en \(config.accessoryName)!")
-                
+
                 // Log tamper attempt
                 logTamperAttempt(accessoryUUID: accessoryID, accessoryName: config.accessoryName)
 
                 // Show tamper notification
                 await NotificationManager.shared.showTamperNotification(accessoryName: config.accessoryName)
 
-                // Revertir al estado bloqueado
+                // Revertir al estado bloqueado (serializado si es Lutron).
                 do {
-                    try await homeKit.setAccessoryPower(accessory, on: config.lockedState)
-                    print("✅ [LockManager] Revertido exitosamente a \(config.lockedState ? "ON" : "OFF")")
-                    
-                    // Delay extra si es Lutron para no saturar el bridge después de una acción
                     if isLutron {
-                        try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+                        try await LutronBridgeGatekeeper.shared.run(for: accessory) {
+                            try await homeKit.setAccessoryPower(accessory, on: config.lockedState)
+                        }
+                    } else {
+                        try await homeKit.setAccessoryPower(accessory, on: config.lockedState)
                     }
+                    print("✅ [LockManager] Revertido exitosamente a \(config.lockedState ? "ON" : "OFF")")
                 } catch {
                     print("❌ [LockManager] Error revirtiendo: \(error.localizedDescription)")
                 }
