@@ -387,8 +387,7 @@ class LockManager: ObservableObject {
                     accessory: accessory,
                     home: home,
                     triggerUUID: triggerID,
-                    expiresAt: expiresAt,
-                    lockedByName: UIDevice.current.name
+                    expiresAt: expiresAt
                 )
             }
         }

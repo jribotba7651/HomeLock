@@ -262,6 +262,24 @@ struct SettingsView: View {
                     Text("Remove all HomeLock triggers and automations from your HomeKit. Lutron devices are ignored by default because their HomeKit bridge is unreliable — disable this only if you've confirmed your bridge stays connected.")
                 }
 
+#if DEBUG
+                // MARK: - Developer Section (DEBUG only)
+                // Estos controles NO se compilan en builds de Release. Si no los
+                // ves al archivar la app → está bien, no van a salir al App Store.
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { storeManager.isPro },
+                        set: { storeManager.debug_setProOverride($0) }
+                    )) {
+                        Label("Force Pro", systemImage: "hammer.fill")
+                    }
+                } header: {
+                    Text("Developer")
+                } footer: {
+                    Text("DEBUG builds only. Overrides the StoreKit entitlement so you can test Pro features without purchasing. Resets on app restart.")
+                }
+#endif
+
                 // MARK: - About Section
                 Section {
                     HStack {

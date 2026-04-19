@@ -176,6 +176,40 @@ class KeychainManager {
         return byte == 1
     }
 
+    // MARK: - Biometric Domain State
+    //
+    // Snapshot de la base biométrica del device para detectar que alguien
+    // añada una huella/cara nueva después del setup. Si cambia → forzamos PIN.
+    // Esto previene el ataque "niño añade su Face ID al device y desbloquea
+    // HomeLock con ella".
+    //
+    // Formato del blob guardado: `version(1B) || hash(N)`.
+    //  - version == 1 → `LAContext.evaluatedPolicyDomainState` (iOS ≤17).
+    //  - version == 2 → `LAContext.domainState.biometry.stateHash` (iOS 18+).
+    //
+    // Apple deprecó la API vieja en iOS 18 y cambió la representación. Si el
+    // usuario actualiza de iOS 17 → iOS 18 el formato cambia, así que el
+    // caller debe tratar "version mismatch" como migración (re-capturar),
+    // no como manipulación.
+
+    private let biometricDomainStateKey = "HomeLock_BiometricDomainState"
+
+    func saveBiometricDomainState(_ state: Data, version: UInt8) -> Bool {
+        var blob = Data([version])
+        blob.append(state)
+        return save(key: biometricDomainStateKey, data: blob)
+    }
+
+    func loadBiometricDomainState() -> (version: UInt8, state: Data)? {
+        guard let blob = load(key: biometricDomainStateKey),
+              let first = blob.first else { return nil }
+        return (first, blob.dropFirst())
+    }
+
+    func deleteBiometricDomainState() -> Bool {
+        return delete(key: biometricDomainStateKey)
+    }
+
     // MARK: - Security Token for Secure Enclave
 
     private let securityTokenKey = "HomeLock_SecurityToken"

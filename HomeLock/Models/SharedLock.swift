@@ -11,8 +11,12 @@ struct SharedLock: Identifiable {
     let expiresAt: Date?
     let createdAt: Date
     let triggerUUID: String
-    
-    init(from record: CKRecord) {
+    /// True si `creatorUserRecordID` (system field) matchea `lockedByUserID`.
+    /// CloudKitService filtra los no-trusted, así que los callers pueden asumir
+    /// true, pero el flag queda explícito para UI que quiera mostrarlo.
+    let isTrusted: Bool
+
+    init(from record: CKRecord, isTrusted: Bool = false) {
         self.id = record.recordID
         self.accessoryUUID = record["accessoryUUID"] as? String ?? ""
         self.accessoryName = record["accessoryName"] as? String ?? "Unknown"
@@ -22,5 +26,6 @@ struct SharedLock: Identifiable {
         self.expiresAt = record["expiresAt"] as? Date
         self.createdAt = record["createdAt"] as? Date ?? Date()
         self.triggerUUID = record["triggerUUID"] as? String ?? ""
+        self.isTrusted = isTrusted
     }
 }

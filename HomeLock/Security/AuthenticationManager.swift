@@ -90,6 +90,28 @@ class AuthenticationManager: ObservableObject {
         return pin.count == 6 && pin.allSatisfy { $0.isNumber }
     }
 
+    // MARK: - Change PIN
+
+    /// Cambia el PIN existente. Asume que el usuario YA verificó el PIN actual
+    /// (la UI de ChangePINView hace ese step primero con `authenticateWithPIN`).
+    /// No toca `isAuthenticated` ni dispara el prompt de biometría — a
+    /// diferencia de `setupPIN`, que es para la primera vez.
+    func changePIN(newPin: String, confirmation: String) -> Result<Bool, AuthenticationError> {
+        guard isValidPIN(newPin) else {
+            return .failure(.invalidPin)
+        }
+        guard newPin == confirmation else {
+            return .failure(.pinMismatch)
+        }
+        guard keychainManager.savePIN(newPin) else {
+            return .failure(.authenticationFailed)
+        }
+        // Reseteamos el contador por si venía con intentos fallidos acumulados
+        // desde antes del cambio — el nuevo PIN empieza fresco.
+        resetFailedAttempts()
+        return .success(true)
+    }
+
     // MARK: - Authentication
 
     func authenticateWithPIN(_ pin: String) -> Result<Bool, AuthenticationError> {
@@ -178,6 +200,16 @@ class AuthenticationManager: ObservableObject {
                 return .failure(.authenticationFailed)
             }
         case .failure(let error):
+            if case .biometricDatabaseChanged = error {
+                // Alguien añadió huella/cara al device después del setup.
+                // Deshabilitamos biometría y forzamos PIN. El padre debe
+                // re-habilitar manualmente desde Settings, lo que re-captura
+                // el snapshot tras verificación del sistema.
+                DispatchQueue.main.async {
+                    self.biometricManager.setBiometricEnabled(false)
+                    self.showingAuthentication = true
+                }
+            }
             return .failure(error)
         }
     }
