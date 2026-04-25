@@ -110,7 +110,36 @@ class HomeKitService: NSObject, ObservableObject {
         let ignoreLutron = Self.shouldIgnoreLutron
         var hiddenLutron = 0
 
+        // Categories that expose a PowerState characteristic but don't behave
+        // like switchable outlets (writing fails or has unintended effects).
+        // Excluding them up-front prevents the user from picking a camera or
+        // doorbell only to hit a "Read/Write operation failed" error.
+        let unsupportedCategories: Set<String> = [
+            HMAccessoryCategoryTypeIPCamera,
+            HMAccessoryCategoryTypeVideoDoorbell,
+            HMAccessoryCategoryTypeAirPurifier,
+            HMAccessoryCategoryTypeThermostat,
+            HMAccessoryCategoryTypeSensor,
+            HMAccessoryCategoryTypeDoorLock,
+            HMAccessoryCategoryTypeGarageDoorOpener,
+            HMAccessoryCategoryTypeWindowCovering,
+            HMAccessoryCategoryTypeWindow,
+            HMAccessoryCategoryTypeDoor,
+            HMAccessoryCategoryTypeAirConditioner,
+            HMAccessoryCategoryTypeAirHeater,
+            HMAccessoryCategoryTypeAirHumidifier,
+            HMAccessoryCategoryTypeAirDehumidifier,
+            HMAccessoryCategoryTypeShowerHead,
+            HMAccessoryCategoryTypeFaucet,
+            HMAccessoryCategoryTypeSprinkler,
+        ]
+
         let filtered = accessories.filter { accessory in
+            // Skip categories we know don't behave like switchable outlets.
+            if unsupportedCategories.contains(accessory.category.categoryType) {
+                return false
+            }
+
             // Primero: ¿es controlable? Si no, fuera siempre.
             let isControllable = accessory.services.contains { service in
                 service.characteristics.contains { $0.characteristicType == HMCharacteristicTypePowerState }
@@ -691,18 +720,39 @@ class HomeKitService: NSObject, ObservableObject {
             let homeLockTriggers = home.triggers.filter {
                 $0.name.hasPrefix("HomeLock_") && $0.isEnabled
             }
+            print("🔍 [HomeKit Sync] Home '\(home.name)': \(homeLockTriggers.count) HomeLock triggers, \(home.accessories.count) accessories")
 
             for trigger in homeLockTriggers {
-                guard let eventTrigger = trigger as? HMEventTrigger else { continue }
+                guard let eventTrigger = trigger as? HMEventTrigger else {
+                    print("⚠️ [HomeKit Sync] Skipping non-event trigger: \(trigger.name)")
+                    continue
+                }
 
-                // Extraer el UUID del accesorio del nombre del trigger
-                // Formato: HomeLock_{accessoryUUID}
-                let triggerName = trigger.name
-                let uuidString = triggerName.replacingOccurrences(of: "HomeLock_", with: "")
-                guard let accessoryUUID = UUID(uuidString: uuidString) else { continue }
+                // Resolve accessory by inspecting the trigger's action set instead of
+                // parsing the UUID from the trigger name. In shared Homes the same
+                // physical accessory can have different `uniqueIdentifier` values per
+                // user, so the name-based lookup fails for triggers created by other
+                // members. The action set always references the local HMAccessory.
+                var resolvedAccessory: HMAccessory?
+                if let actionSet = eventTrigger.actionSets.first,
+                   let writeAction = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
+                   let accessory = writeAction.characteristic.service?.accessory {
+                    resolvedAccessory = accessory
+                }
 
-                // Buscar el accesorio
-                guard let accessory = home.accessories.first(where: { $0.uniqueIdentifier == accessoryUUID }) else { continue }
+                // Fallback to name-based lookup for triggers without an action set
+                // (legacy data, in-progress creation).
+                if resolvedAccessory == nil {
+                    let uuidString = trigger.name.replacingOccurrences(of: "HomeLock_", with: "")
+                    if let accessoryUUID = UUID(uuidString: uuidString) {
+                        resolvedAccessory = home.accessories.first(where: { $0.uniqueIdentifier == accessoryUUID })
+                    }
+                }
+
+                guard let accessory = resolvedAccessory else {
+                    print("⚠️ [HomeKit Sync] No se pudo resolver accessory para trigger: \(trigger.name)")
+                    continue
+                }
 
                 // Determinar el estado bloqueado desde el evento del trigger
                 var lockedState = true
@@ -715,7 +765,7 @@ class HomeKitService: NSObject, ObservableObject {
                 }
 
                 let detected = DetectedLock(
-                    accessoryUUID: accessoryUUID,
+                    accessoryUUID: accessory.uniqueIdentifier,
                     accessoryName: accessory.name,
                     triggerUUID: trigger.uniqueIdentifier,
                     lockedState: lockedState,

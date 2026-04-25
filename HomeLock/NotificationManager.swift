@@ -125,8 +125,10 @@ class NotificationManager: ObservableObject {
 
     // MARK: - Multi-User Notifications
 
-    /// Shows an immediate notification when another home member locks/unlocks a device
-    func showExternalLockNotification(accessoryName: String, isLocked: Bool) async {
+    /// Shows an immediate notification when another home member locks/unlocks a device.
+    /// Pass `userName` to attribute the action to a specific family member; nil falls
+    /// back to the generic "another home member" wording.
+    func showExternalLockNotification(accessoryName: String, isLocked: Bool, userName: String? = nil) async {
         guard isAuthorized else {
             print("📱 [NotificationManager] Not authorized to show notifications")
             return
@@ -134,13 +136,15 @@ class NotificationManager: ObservableObject {
 
         let identifier = "external-lock-\(UUID().uuidString)"
 
+        let actor = (userName?.isEmpty == false) ? userName! : String(localized: "another home member")
+
         let content = UNMutableNotificationContent()
         if isLocked {
             content.title = String(localized: "Device Locked")
-            content.body = String(localized: "\(accessoryName) was locked by another home member")
+            content.body = String(localized: "\(accessoryName) was locked by \(actor)")
         } else {
             content.title = String(localized: "Device Unlocked")
-            content.body = String(localized: "\(accessoryName) was unlocked by another home member")
+            content.body = String(localized: "\(accessoryName) was unlocked by \(actor)")
         }
         content.sound = .default
         content.userInfo = [
