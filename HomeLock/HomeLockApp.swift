@@ -68,9 +68,13 @@ struct HomeLockApp: App {
         .modelContainer(modelContainer)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                print("📱 [HomeLockApp] App became active, clearing badge count")
-                Task {
-                     try? await UNUserNotificationCenter.current().setBadgeCount(0)
+                print("📱 [HomeLockApp] App became active, clearing badge count + syncing")
+                Task { @MainActor in
+                    try? await UNUserNotificationCenter.current().setBadgeCount(0)
+                    // Force an immediate sync from HomeKit so locks created by
+                    // family members on other devices show up without waiting
+                    // for the 30s polling timer.
+                    await LockManager.shared.syncFromHomeKit()
                 }
             }
         }
@@ -80,7 +84,7 @@ struct HomeLockApp: App {
         print("🎯 [HomeLockApp] Registering background task handler")
 
         BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: "com.jibaroenaluna.homelock.expireLock",
+            forTaskWithIdentifier: "com.jibaroenlaluna.homelock.expireLock",
             using: nil
         ) { task in
             print("🎯 [HomeLockApp] Background task triggered!")

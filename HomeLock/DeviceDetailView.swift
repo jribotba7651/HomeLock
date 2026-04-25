@@ -250,7 +250,7 @@ struct DeviceDetailView: View {
             Text(errorMessage ?? String(localized: "Unknown error"))
         }
         .sheet(isPresented: $showingPaywall) {
-            PaywallView()
+            PaywallView(isPresented: $showingPaywall)
         }
     }
 

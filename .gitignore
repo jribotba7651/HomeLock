@@ -47,3 +47,6 @@ fastlane/test_output
 *~
 .idea/
 *.iml
+
+# Local tooling (not part of HomeLock)
+Rubber-Duck/

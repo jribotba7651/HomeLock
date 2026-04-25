@@ -20,6 +20,10 @@ struct LockConfiguration: Codable, Identifiable {
     let lockedState: Bool
     let createdAt: Date
     let expiresAt: Date? // nil = indefinido
+    /// When set, identifies the family member who created this lock from another
+    /// device. Nil for locks created locally. Used to attribute unlock
+    /// notifications. Optional so old persisted configs decode without migration.
+    var lockedByName: String?
 
     var isExpired: Bool {
         guard let expiresAt else { return false }
@@ -61,10 +65,10 @@ class LockManager: ObservableObject {
     private var modelContext: ModelContext?
     private var homeKitCancellable: AnyCancellable?
     private var syncTimer: Timer?
-    private let syncInterval: TimeInterval = 30.0 // Sync every 30 seconds (increased from 10)
+    private let syncInterval: TimeInterval = 8.0 // Sync every 8s for snappy cross-device updates
 
     // Background Task Management
-    nonisolated static let backgroundTaskIdentifier = "com.jibaroenaluna.homelock.expireLock"
+    nonisolated static let backgroundTaskIdentifier = "com.jibaroenlaluna.homelock.expireLock"
 
     // MARK: - Polling (Fallback for HMEventTrigger)
     private var pollingTimer: Timer?
@@ -221,10 +225,24 @@ class LockManager: ObservableObject {
         let detectedAccessoryIDs = Set(detectedLocks.map { $0.accessoryUUID })
         let localAccessoryIDs = Set(locks.keys)
 
+        // Pull the latest CloudKit attribution data so we can name the family
+        // member that locked/unlocked the device. Best-effort — if CloudKit is
+        // not configured or the user is offline, we fall back to "another home member".
+        var sharedLocksByName: [String: SharedLock] = [:]
+        if StoreManager.shared.isPro, let home = HomeKitService.shared.homes.first {
+            if let shared = try? await CloudKitService.shared.fetchLocks(for: home) {
+                for sl in shared {
+                    sharedLocksByName[sl.accessoryName] = sl
+                }
+            }
+        }
+
         // 1. Detectar NUEVOS locks (creados por otros usuarios)
         for detected in detectedLocks {
             if !localAccessoryIDs.contains(detected.accessoryUUID) {
                 print("🆕 [LockManager Sync] Nuevo lock detectado desde HomeKit: \(detected.accessoryName)")
+
+                let attributedName = sharedLocksByName[detected.accessoryName]?.lockedByName
 
                 // Agregar a locks locales (sin crear trigger, ya existe)
                 let config = LockConfiguration(
@@ -234,7 +252,8 @@ class LockManager: ObservableObject {
                     triggerID: detected.triggerUUID,
                     lockedState: detected.lockedState,
                     createdAt: Date(),
-                    expiresAt: nil // Los locks de otros usuarios no tienen expiración conocida
+                    expiresAt: nil, // Los locks de otros usuarios no tienen expiración conocida
+                    lockedByName: attributedName
                 )
 
                 locks[detected.accessoryUUID] = config
@@ -243,11 +262,13 @@ class LockManager: ObservableObject {
                 // Notificar al usuario
                 await NotificationManager.shared.showExternalLockNotification(
                     accessoryName: detected.accessoryName,
-                    isLocked: true
+                    isLocked: true,
+                    userName: attributedName
                 )
 
                 // Log event
-                logEvent(.locked, accessoryUUID: detected.accessoryUUID, accessoryName: detected.accessoryName, notes: "Locked by another home member")
+                let lockedByNote = attributedName.map { "Locked by \($0)" } ?? "Locked by another home member"
+                logEvent(.locked, accessoryUUID: detected.accessoryUUID, accessoryName: detected.accessoryName, notes: lockedByNote)
 
                 // Iniciar polling si no estaba activo
                 if !isPolling {
@@ -275,14 +296,17 @@ class LockManager: ObservableObject {
                     // Cancelar notificación de expiración
                     await NotificationManager.shared.cancelLockExpirationNotification(accessoryID: accessoryID)
 
-                    // Notificar al usuario
+                    // Notificar al usuario — usar el nombre que guardamos cuando
+                    // se detectó el lock externo (si aplica).
                     await NotificationManager.shared.showExternalLockNotification(
                         accessoryName: config.accessoryName,
-                        isLocked: false
+                        isLocked: false,
+                        userName: config.lockedByName
                     )
 
                     // Log event
-                    logEvent(.unlocked, accessoryUUID: accessoryID, accessoryName: config.accessoryName, notes: "Unlocked by another home member")
+                    let unlockedByNote = config.lockedByName.map { "Unlocked by \($0)" } ?? "Unlocked by another home member"
+                    logEvent(.unlocked, accessoryUUID: accessoryID, accessoryName: config.accessoryName, notes: unlockedByNote)
 
                     // Eliminar de locks locales
                     locks.removeValue(forKey: accessoryID)
@@ -387,8 +411,7 @@ class LockManager: ObservableObject {
                     accessory: accessory,
                     home: home,
                     triggerUUID: triggerID,
-                    expiresAt: expiresAt,
-                    lockedByName: UIDevice.current.name
+                    expiresAt: expiresAt
                 )
             }
         }

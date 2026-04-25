@@ -2,6 +2,7 @@ import Foundation
 import CloudKit
 import HomeKit
 import Combine
+import UIKit
 
 @MainActor
 class CloudKitService: ObservableObject {
@@ -14,24 +15,51 @@ class CloudKitService: ObservableObject {
     private let container: CKContainer
     private var sharedZone: CKRecordZone?
     private var share: CKShare?
-    
+
+    /// True when the local user is a participant of someone else's shared zone.
+    /// When true, all reads/writes go through `container.sharedCloudDatabase`
+    /// instead of `container.privateCloudDatabase`. Without this distinction,
+    /// participants would write to (and read from) their own private DB and
+    /// never see records from the share owner.
+    private var isParticipant: Bool = false
+
+    /// Database to use for the shared zone, depending on owner vs participant.
+    private var database: CKDatabase {
+        isParticipant ? container.sharedCloudDatabase : container.privateCloudDatabase
+    }
+
     private init() {
         container = CKContainer(identifier: "iCloud.com.jibaroenlaluna.HomeLock")
     }
-    
+
     // MARK: - Zone Setup
-    
+
     func setupSharedZone(for homeID: UUID) async throws {
+        // 1. If we accepted a share, the zone lives in our sharedCloudDatabase.
+        //    Detect that first so participant devices read/write the right DB.
+        do {
+            let participantZones = try await container.sharedCloudDatabase.allRecordZones()
+            if let participantZone = participantZones.first(where: { $0.zoneID.zoneName.hasPrefix("HomeLockFamily-") }) {
+                sharedZone = participantZone
+                isParticipant = true
+                print("☁️ [CloudKit] Participant zone detected: \(participantZone.zoneID.zoneName)")
+                return
+            }
+        } catch {
+            print("☁️ [CloudKit] sharedCloudDatabase lookup failed: \(error.localizedDescription)")
+        }
+
+        // 2. Otherwise we are the owner — create or fetch the zone in privateCloudDatabase.
         let zoneID = CKRecordZone.ID(zoneName: "HomeLockFamily-\(homeID.uuidString)", ownerName: CKCurrentUserDefaultName)
-        
         do {
             let zone = CKRecordZone(zoneID: zoneID)
             sharedZone = try await container.privateCloudDatabase.save(zone)
-            print("☁️ [CloudKit] Shared zone created: \(zoneID.zoneName)")
+            isParticipant = false
+            print("☁️ [CloudKit] Owner zone created: \(zoneID.zoneName)")
         } catch {
-            // Zone already exists
             sharedZone = try await container.privateCloudDatabase.recordZone(for: zoneID)
-            print("☁️ [CloudKit] Shared zone retrieved: \(zoneID.zoneName)")
+            isParticipant = false
+            print("☁️ [CloudKit] Owner zone retrieved: \(zoneID.zoneName)")
         }
     }
     
@@ -68,7 +96,7 @@ class CloudKitService: ObservableObject {
         let share = CKShare(rootRecord: rootRecord)
         share.publicPermission = .none // Solo invitados pueden verlo
         share[CKShare.SystemFieldKey.title] = "HomeLock Family"
-        share[CKShare.SystemFieldKey.shareType] = "com.jibaroenaluna.homelock.family"
+        share[CKShare.SystemFieldKey.shareType] = "com.jibaroenlaluna.homelock.family"
         
         let operation = CKModifyRecordsOperation(recordsToSave: [rootRecord, share])
         operation.qualityOfService = .userInitiated
@@ -88,74 +116,130 @@ class CloudKitService: ObservableObject {
     }
     
     // MARK: - CRUD Operations
-    
-    func createSharedLock(accessory: HMAccessory, home: HMHome, triggerUUID: UUID, expiresAt: Date?, lockedByName: String) async throws -> SharedLock {
+
+    /// Crea un SharedLock en CloudKit.
+    ///
+    /// **Seguridad:** `lockedByUserID` y `lockedByName` NO se reciben del
+    /// caller — se derivan del iCloud user actual y `UIDevice.current.name`
+    /// respectivamente. Así un participante malicioso del CKShare no puede
+    /// crear records que atribuyen el lock a otro padre.
+    ///
+    /// En fetch, además, validamos que `creatorUserRecordID` (system field,
+    /// puesto por CloudKit y no editable) matchea `lockedByUserID`. Si no,
+    /// el record fue spoofed y se descarta.
+    func createSharedLock(accessory: HMAccessory, home: HMHome, triggerUUID: UUID, expiresAt: Date?) async throws -> SharedLock {
         guard let zone = sharedZone else {
             throw CloudKitError.zoneNotSetup
         }
-        
+
+        let currentUserID = try await getCurrentUserID()
         let recordID = CKRecord.ID(recordName: UUID().uuidString, zoneID: zone.zoneID)
         let record = CKRecord(recordType: "SharedLock", recordID: recordID)
-        
+
         record["accessoryUUID"] = accessory.uniqueIdentifier.uuidString
         record["accessoryName"] = accessory.name
         record["homeID"] = home.uniqueIdentifier.uuidString
-        record["lockedByUserID"] = try await getCurrentUserID()
-        record["lockedByName"] = lockedByName
+        record["lockedByUserID"] = currentUserID
+        record["lockedByName"] = UIDevice.current.name
         record["expiresAt"] = expiresAt
         record["createdAt"] = Date()
         record["triggerUUID"] = triggerUUID.uuidString
-        
-        let savedRecord = try await container.privateCloudDatabase.save(record)
-        let lock = SharedLock(from: savedRecord)
-        
+
+        let savedRecord = try await database.save(record)
+        // En creación el creator siempre somos nosotros, así que isTrusted=true.
+        let lock = SharedLock(from: savedRecord, isTrusted: true)
+
         await MainActor.run {
             sharedLocks.append(lock)
         }
-        
+
         return lock
     }
-    
+
     func fetchLocks(for home: HMHome) async throws -> [SharedLock] {
         guard let zone = sharedZone else {
             return []
         }
-        
+
         let predicate = NSPredicate(format: "homeID == %@", home.uniqueIdentifier.uuidString)
         let query = CKQuery(recordType: "SharedLock", predicate: predicate)
-        
-        let (results, _) = try await container.privateCloudDatabase.records(
+
+        let (results, _) = try await database.records(
             matching: query,
             inZoneWith: zone.zoneID
         )
-        
+
         let locks = results.compactMap { _, result -> SharedLock? in
             guard case .success(let record) = result else { return nil }
-            return SharedLock(from: record)
+            // Drop records forged by other share participants: si el
+            // `creatorUserRecordID` (system, no-spoofable) no matchea con el
+            // `lockedByUserID` escrito por el cliente, alguien intentó hacerse
+            // pasar por otro usuario. Descartamos el record.
+            guard Self.isRecordAuthentic(record) else {
+                print("⚠️ [CloudKit] Record \(record.recordID.recordName) descartado: creator != lockedByUserID")
+                return nil
+            }
+            return SharedLock(from: record, isTrusted: true)
         }
-        
+
         await MainActor.run {
             self.sharedLocks = locks
         }
-        
+
         return locks
     }
-    
+
     func deleteLock(for accessoryID: UUID) async throws {
         guard sharedZone != nil else { return }
-        
-        // Find the record ID locally or via query
+
         let accessoryIDString = accessoryID.uuidString
-        if let lockToDelete = sharedLocks.first(where: { $0.accessoryUUID == accessoryIDString }) {
-            try await container.privateCloudDatabase.deleteRecord(withID: lockToDelete.id)
-            await MainActor.run {
-                sharedLocks.removeAll { $0.accessoryUUID == accessoryIDString }
-            }
+        guard let lockToDelete = sharedLocks.first(where: { $0.accessoryUUID == accessoryIDString }) else {
+            return
         }
+
+        // Solo el creator del lock puede borrarlo. CloudKit enforza esto a
+        // nivel de CKShare permissions (un `.readWrite` participant puede
+        // borrar records ajenos si la zone se lo permite), así que añadimos
+        // una guard client-side extra: si no somos el creator, rechazamos.
+        let currentUserID = try await getCurrentUserID()
+        if lockToDelete.lockedByUserID != currentUserID {
+            throw CloudKitError.notAuthorized
+        }
+
+        try await database.deleteRecord(withID: lockToDelete.id)
+        await MainActor.run {
+            sharedLocks.removeAll { $0.accessoryUUID == accessoryIDString }
+        }
+    }
+
+    /// Valida que el record no fue forged: el creator (system field) debe
+    /// ser el mismo que `lockedByUserID` (user-writable). Si difieren, otro
+    /// participante del CKShare creó el record y le puso un userID ajeno.
+    private static func isRecordAuthentic(_ record: CKRecord) -> Bool {
+        guard let creator = record.creatorUserRecordID?.recordName,
+              let claimed = record["lockedByUserID"] as? String else {
+            // Record sin creator = record local nunca subido, o sin userID
+            // declarado = malformed. En ambos casos, descartamos.
+            return false
+        }
+        return creator == claimed
     }
     
     func acceptShareMetadata(_ metadata: CKShare.Metadata) async throws {
         try await container.accept(metadata)
+
+        // Refresh zone state so we pick up the new shared zone immediately,
+        // without waiting for the next app launch / configure() pass.
+        do {
+            let participantZones = try await container.sharedCloudDatabase.allRecordZones()
+            if let participantZone = participantZones.first(where: { $0.zoneID.zoneName.hasPrefix("HomeLockFamily-") }) {
+                sharedZone = participantZone
+                isParticipant = true
+                print("☁️ [CloudKit] Participant zone activated after accept: \(participantZone.zoneID.zoneName)")
+            }
+        } catch {
+            print("☁️ [CloudKit] Failed to refresh participant zone after accept: \(error.localizedDescription)")
+        }
     }
     
     private func getCurrentUserID() async throws -> String {
@@ -167,5 +251,6 @@ class CloudKitService: ObservableObject {
         case zoneNotSetup
         case shareNotCreated
         case noShareURL
+        case notAuthorized
     }
 }
