@@ -58,6 +58,20 @@ class HomeKitService: NSObject, ObservableObject {
             || model.contains("ra3")
     }
 
+    /// `true` si el trigger `HomeLock_{accessoryUUID}` apunta a un accesorio Lutron.
+    /// Devuelve `false` si el nombre no tiene el prefijo esperado o si no se encuentra
+    /// el accesorio en el home (en cuyo caso no podemos asumir que sea Lutron).
+    func triggerReferencesLutron(_ trigger: HMTrigger, in home: HMHome) -> Bool {
+        let prefix = "HomeLock_"
+        guard trigger.name.hasPrefix(prefix) else { return false }
+        let uuidString = String(trigger.name.dropFirst(prefix.count))
+        guard let accessoryUUID = UUID(uuidString: uuidString) else { return false }
+        guard let accessory = home.accessories.first(where: { $0.uniqueIdentifier == accessoryUUID }) else {
+            return false
+        }
+        return isLutronDevice(accessory)
+    }
+
     /// Detecta si un accesorio es de la marca TP-Link/Kasa
     func isKasaDevice(_ accessory: HMAccessory) -> Bool {
         let manufacturer = accessory.manufacturer?.lowercased() ?? ""
@@ -226,8 +240,16 @@ class HomeKitService: NSObject, ObservableObject {
             print("🚨 [HomeLock] PROTECCIÓN DE LÍMITES! Total triggers: \(totalTriggers), HomeLock: \(homeLockTriggers.count)")
             print("🧹 [HomeLock] Ejecutando limpieza masiva...")
 
-            // Limpiar TODOS los triggers HomeLock
+            let isolateLutron = Self.shouldIgnoreLutron
+
+            // Limpiar TODOS los triggers HomeLock — pero respetando el aislamiento.
+            // Si el flag está activo, saltamos los triggers cuyo accesorio es Lutron
+            // para no enviar borrados al bridge.
             for trigger in homeLockTriggers {
+                if isolateLutron && triggerReferencesLutron(trigger, in: home) {
+                    print("🚫 [HomeLock] Skip trigger Lutron en limpieza masiva: \(trigger.name)")
+                    continue
+                }
                 print("🧹 [HomeLock] Eliminando trigger: \(trigger.name)")
 
                 // Eliminar action sets del trigger
@@ -240,8 +262,14 @@ class HomeKitService: NSObject, ObservableObject {
                 try? await home.removeTrigger(trigger)
             }
 
-            // Limpiar action sets huérfanos
+            // Limpiar action sets huérfanos — saltando los que pertenecen a Lutron.
             for actionSet in homeLockActionSets {
+                if isolateLutron, let action = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
+                   let actionAccessory = action.characteristic.service?.accessory,
+                   isLutronDevice(actionAccessory) {
+                    print("🚫 [HomeLock] Skip ActionSet Lutron en limpieza masiva: \(actionSet.name)")
+                    continue
+                }
                 try? await home.removeActionSet(actionSet)
             }
 
@@ -500,6 +528,14 @@ class HomeKitService: NSObject, ObservableObject {
 
     /// Elimina un trigger de lock por su UUID
     func removeLockTrigger(triggerID: UUID, for accessory: HMAccessory) async throws {
+        // Aislamiento Lutron: si el flag global está activo, NO tocamos el bridge.
+        // El trigger queda en HomeKit pero no se intenta borrar — borrarlo dispara
+        // tráfico contra el bridge Lutron y satura la conexión.
+        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
+            print("🚫 [HomeKit] Skip removeLockTrigger (Lutron isolated): \(accessory.name)")
+            return
+        }
+
         guard let home = getHome(for: accessory) else {
             throw HomeKitError.homeNotFound
         }
@@ -550,6 +586,12 @@ class HomeKitService: NSObject, ObservableObject {
 
     /// Elimina un trigger de lock por nombre del accesorio
     func removeLockTrigger(for accessory: HMAccessory) async throws {
+        // Aislamiento Lutron: ver nota en la otra sobrecarga.
+        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
+            print("🚫 [HomeKit] Skip removeLockTrigger by-name (Lutron isolated): \(accessory.name)")
+            return
+        }
+
         guard let home = getHome(for: accessory) else {
             throw HomeKitError.homeNotFound
         }
@@ -591,6 +633,7 @@ class HomeKitService: NSObject, ObservableObject {
     /// - Returns: Número de elementos eliminados (triggers + action sets)
     func removeAllHomeLockAutomations() async -> Int {
         var removedCount = 0
+        let isolateLutron = Self.shouldIgnoreLutron
 
         for home in homes {
             print("🧹 [HomeLock] Limpiando home: \(home.name)")
@@ -600,6 +643,14 @@ class HomeKitService: NSObject, ObservableObject {
             print("🧹 [HomeLock] Encontrados \(homeLockTriggers.count) triggers HomeLock_")
 
             for trigger in homeLockTriggers {
+                // Aislamiento Lutron: incluso un cleanup explícito del usuario debe
+                // saltar Lutron, porque borrar 50 triggers en ráfaga al bridge es
+                // exactamente lo que tira la conexión de toda la casa. Si el usuario
+                // quiere limpiar Lutron, primero desactiva el aislamiento.
+                if isolateLutron && triggerReferencesLutron(trigger, in: home) {
+                    print("🚫 [HomeLock] Skip trigger Lutron en cleanup (aislado): \(trigger.name)")
+                    continue
+                }
                 do {
                     // Primero eliminar action sets asociados al trigger
                     if let eventTrigger = trigger as? HMEventTrigger {
@@ -638,6 +689,13 @@ class HomeKitService: NSObject, ObservableObject {
             print("🧹 [HomeLock] Encontrados \(homeLockActionSets.count) ActionSets HomeLock_")
 
             for actionSet in homeLockActionSets {
+                if isolateLutron,
+                   let action = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
+                   let actionAccessory = action.characteristic.service?.accessory,
+                   isLutronDevice(actionAccessory) {
+                    print("🚫 [HomeLock] Skip ActionSet Lutron en cleanup (aislado): \(actionSet.name)")
+                    continue
+                }
                 do {
                     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                         home.removeActionSet(actionSet) { error in
