@@ -162,6 +162,15 @@ class HomeKitService: NSObject, ObservableObject {
             return nil
         }
 
+        // Last-line defense for reads: characteristic reads also travel over
+        // the Caséta bridge's Clear Connect radio. With Lutron isolated, even
+        // a cached read should avoid issuing a fresh readValue() to the bridge.
+        // We return the cached value if present, otherwise nil (caller treats
+        // as "unknown state"), without ever hitting the bridge.
+        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
+            return powerState.value as? Bool
+        }
+
         do {
             // Intentar lectura fresca con un timeout implícito corto
             try await powerState.readValue()
@@ -179,6 +188,17 @@ class HomeKitService: NSObject, ObservableObject {
 
     /// Cambia el estado de un accesorio
     func setAccessoryPower(_ accessory: HMAccessory, on: Bool) async throws {
+        // Last-line defense: the lowest write primitive in the app refuses to
+        // touch a Lutron accessory when isolation is on. Every higher-level
+        // call site is supposed to gate this already, but if any path slipped
+        // past (CloudKit-driven re-application, a forgotten code path, a future
+        // refactor), this guard ensures no characteristic write ever reaches
+        // the Caséta bridge while the user has Lutron isolated.
+        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
+            print("🚫 [HomeKit] BLOCKED setAccessoryPower for isolated Lutron: \(accessory.name)")
+            throw HomeKitError.serviceNotFound
+        }
+
         guard let service = getControllableService(for: accessory),
               let powerState = getPowerStateCharacteristic(for: service) else {
             throw HomeKitError.serviceNotFound
