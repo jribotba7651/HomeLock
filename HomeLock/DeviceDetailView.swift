@@ -250,7 +250,7 @@ struct DeviceDetailView: View {
             Text(errorMessage ?? String(localized: "Unknown error"))
         }
         .sheet(isPresented: $showingPaywall) {
-            PaywallView()
+            PaywallView(isPresented: $showingPaywall)
         }
     }
 
@@ -281,6 +281,17 @@ struct DeviceDetailView: View {
             return
         }
 
+        // Lutron isolation guard: refuse to issue writes when the user has Lutron
+        // isolation enabled. The UI hides Lutron devices from outlets, but a lock
+        // attempt from a deep-linked or stale view could still reach here.
+        if HomeKitService.shouldIgnoreLutron && homeKit.isLutronDevice(accessory) {
+            await MainActor.run {
+                errorMessage = String(localized: "Lutron devices are disabled in Settings")
+                showingError = true
+            }
+            return
+        }
+
         await MainActor.run {
             isLocking = true
             lockManager.isUserOperating = true
@@ -293,18 +304,24 @@ struct DeviceDetailView: View {
             }
         }
 
+        let isLutron = homeKit.isLutronDevice(accessory)
+
         do {
-            try await homeKit.setAccessoryPower(accessory, on: lockToState)
-            await MainActor.run {
-                isOn = lockToState
+            let triggerID: UUID
+            if isLutron {
+                // Serialize through the bridge gatekeeper to avoid saturating the
+                // Caséta Smart Hub's Clear Connect radio with parallel writes.
+                triggerID = try await LutronBridgeGatekeeper.shared.run(for: accessory) {
+                    try await homeKit.setAccessoryPower(accessory, on: lockToState)
+                    return try await homeKit.createLockTrigger(for: accessory, lockedState: lockToState)
+                }
+            } else {
+                try await homeKit.setAccessoryPower(accessory, on: lockToState)
+                triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: lockToState)
             }
 
-            let triggerID = try await homeKit.createLockTrigger(
-                for: accessory,
-                lockedState: lockToState
-            )
-
             await MainActor.run {
+                isOn = lockToState
                 lockManager.addLock(
                     accessoryID: accessory.uniqueIdentifier,
                     accessoryName: accessory.name,

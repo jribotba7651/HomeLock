@@ -144,14 +144,31 @@ class ScheduleManager: ObservableObject {
             return
         }
 
+        // Lutron isolation guard: if isolated, refuse to write. Defense in depth —
+        // the outlets filter should already exclude Lutron, but stale schedules
+        // from before isolation toggled on could still have Lutron UUIDs.
+        if HomeKitService.shouldIgnoreLutron && homeKit.isLutronDevice(accessory) {
+            print("🚫 [ScheduleManager] Skipping scheduled lock for isolated Lutron device: \(accessory.name)")
+            return
+        }
+
         print("📅 [ScheduleManager] Activating scheduled lock for \(schedule.accessoryName)")
 
-        do {
-            // First, turn off the device
-            try await homeKit.setAccessoryPower(accessory, on: false)
+        let isLutron = homeKit.isLutronDevice(accessory)
 
-            // Create the lock trigger
-            let triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: false)
+        do {
+            let triggerID: UUID
+            if isLutron {
+                // Serialize through the bridge gatekeeper to avoid saturating the
+                // Caséta Smart Hub's Clear Connect radio.
+                triggerID = try await LutronBridgeGatekeeper.shared.run(for: accessory) {
+                    try await homeKit.setAccessoryPower(accessory, on: false)
+                    return try await homeKit.createLockTrigger(for: accessory, lockedState: false)
+                }
+            } else {
+                try await homeKit.setAccessoryPower(accessory, on: false)
+                triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: false)
+            }
 
             // Add the lock (no expiration for scheduled locks - they're managed by schedule)
             lockManager.addLock(

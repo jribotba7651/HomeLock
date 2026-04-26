@@ -204,6 +204,16 @@ class HomeKitService: NSObject, ObservableObject {
         print("🔒 [HomeLock] Dispositivo: \(accessory.name)")
         print("🔒 [HomeLock] Estado a mantener: \(lockedState ? "ON" : "OFF")")
 
+        // Lutron isolation: when the user has Lutron isolated (default), refuse
+        // to write triggers to a Lutron device. This is defense-in-depth — UI and
+        // schedulers already filter Lutron, but a direct call from a deep-linked
+        // path or a stale lock-restore flow could still reach here. Refusing prevents
+        // the bridge saturation that drops the entire Lutron home off HomeKit.
+        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
+            print("🚫 [HomeLock] Refusing to create trigger for isolated Lutron device: \(accessory.name)")
+            throw HomeKitError.serviceNotFound
+        }
+
         guard let home = getHome(for: accessory) else {
             print("❌ [HomeLock] ERROR: No se encontró el home para el accesorio")
             throw HomeKitError.homeNotFound
@@ -390,6 +400,14 @@ class HomeKitService: NSObject, ObservableObject {
             }
         }
 
+        // Lutron Clear Connect throttle: insert a 500ms gap between consecutive
+        // writes so the Caséta bridge has time to settle. Without this, the three
+        // back-to-back writes (addTrigger → addActionSet → enable) saturate the
+        // 434 MHz radio and the bridge drops the HomeKit connection.
+        if isLutron {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+
         // Agregar action set al trigger
         print("🔒 [HomeLock] Agregando ActionSet al trigger...")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -402,6 +420,10 @@ class HomeKitService: NSObject, ObservableObject {
                     continuation.resume()
                 }
             }
+        }
+
+        if isLutron {
+            try? await Task.sleep(nanoseconds: 500_000_000)
         }
 
         // Habilitar el trigger
