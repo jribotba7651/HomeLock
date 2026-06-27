@@ -65,7 +65,7 @@ class HomeKitService: NSObject, ObservableObject {
     /// Filtra accesorios que tienen servicios controlables por encendido/apagado
     private func filterOutlets(from accessories: [HMAccessory]) -> [HMAccessory] {
         accessories.filter { accessory in
-            // Broaden search: any accessory that has at least one service with a PowerState characteristic
+            !isLutronDevice(accessory) &&
             accessory.services.contains { service in
                 service.characteristics.contains { $0.characteristicType == HMCharacteristicTypePowerState }
             }
@@ -257,11 +257,8 @@ class HomeKitService: NSObject, ObservableObject {
             }
         }
 
-        // Pequeña pausa para que HomeKit sincronice y el Bridge Lutron respire
-        let isLutron = isLutronDevice(accessory)
-        let delayNanoseconds: UInt64 = isLutron ? 1_000_000_000 : 500_000_000 // 1s para Lutron, 0.5s para otros
-        print("🔒 [HomeLock] Pausa de estabilización: \(Double(delayNanoseconds) / 1_000_000_000)s (Lutron: \(isLutron))")
-        try? await Task.sleep(nanoseconds: delayNanoseconds)
+        // Stabilization pause for HomeKit sync
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
 
         // Verificar limpieza
         let remainingHomeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
@@ -333,10 +330,6 @@ class HomeKitService: NSObject, ObservableObject {
             }
         }
 
-        // Delay adicional para Lutron después de habilitar para evitar spam al bridge
-        if isLutron {
-            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms extra
-        }
 
         // Verificación final
         print("🔒 [HomeLock] ========== VERIFICACIÓN FINAL ==========")
@@ -485,10 +478,6 @@ class HomeKitService: NSObject, ObservableObject {
             }
         }
 
-        // Delay extra para Lutron para dejar que el bridge procese la eliminación
-        if isLutronDevice(accessory) {
-            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
-        }
     }
 
     /// Elimina un trigger de lock por nombre del accesorio
@@ -524,10 +513,6 @@ class HomeKitService: NSObject, ObservableObject {
             }
         }
 
-        // Delay extra para Lutron
-        if isLutronDevice(accessory) {
-            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
-        }
     }
 
     /// Elimina TODAS las automatizaciones de HomeLock (triggers y action sets que empiezan con "HomeLock_")

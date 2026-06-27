@@ -30,7 +30,7 @@ struct FamilySettingsView: View {
                 }
                 .disabled(isInviting)
                 
-                if let share = activeShare, let url = share.url {
+                if let share = activeShare, share.url != nil {
                     Button(action: { showingShareSheet = true }) {
                         HStack {
                             Image(systemName: "square.and.arrow.up")

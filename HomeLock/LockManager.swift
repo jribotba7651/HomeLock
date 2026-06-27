@@ -335,6 +335,11 @@ class LockManager: ObservableObject {
             throw LockManagerError.accessoryNotFound
         }
 
+        guard !homeKit.isLutronDevice(accessory) else {
+            print("🚫 [LockManager] Lutron device blocked: \(accessory.name)")
+            throw LockManagerError.accessoryNotFound
+        }
+
         // 1. Set power state
         try await homeKit.setAccessoryPower(accessory, on: lockedState)
         
@@ -513,7 +518,7 @@ class LockManager: ObservableObject {
 
         // Crear timer en el main run loop explícitamente con weak reference
         let timer = Timer(timeInterval: pollingInterval, repeats: true) { [weak self] timer in
-            guard let self = self else {
+            guard self != nil else {
                 print("🧹 [LockManager] Self is nil, invalidating timer")
                 timer.invalidate()
                 return
@@ -605,9 +610,6 @@ class LockManager: ObservableObject {
                 continue
             }
 
-            // Detectar si es Lutron para aplicar rate limiting
-            let isLutron = homeKit.isLutronDevice(accessory)
-
             // Verificar si expiró
             if config.isExpired {
                 print("⏰ [LockManager] Lock expirado durante polling: \(config.accessoryName)")
@@ -634,20 +636,13 @@ class LockManager: ObservableObject {
                 do {
                     try await homeKit.setAccessoryPower(accessory, on: config.lockedState)
                     print("✅ [LockManager] Revertido exitosamente a \(config.lockedState ? "ON" : "OFF")")
-                    
-                    // Delay extra si es Lutron para no saturar el bridge después de una acción
-                    if isLutron {
-                        try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
-                    }
                 } catch {
                     print("❌ [LockManager] Error revirtiendo: \(error.localizedDescription)")
                 }
             }
             
-            // Pausa mínima entre accesorios para evitar ráfagas al bridge o al Wi-Fi
-            // Lutron (Bridge) necesita más tiempo, pero Kasa (Wi-Fi) también agradece un respiro
-            let interDeviceDelay = isLutron ? 400_000_000 : 200_000_000 // 400ms vs 200ms
-            try? await Task.sleep(nanoseconds: UInt64(interDeviceDelay))
+            // Pausa mínima entre accesorios para evitar ráfagas al Wi-Fi
+            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
         }
     }
 
@@ -693,7 +688,7 @@ class LockManager: ObservableObject {
             // ASYNC (no critico): Limpiar triggers expirados y reprogramar notificaciones
             if !expiredLocks.isEmpty || !validLocks.isEmpty {
                 Task { @MainActor [weak self] in
-                    guard let self = self else { return }
+                    guard self != nil else { return }
 
                     for expiredLock in expiredLocks {
                         print("🚨 [LockManager] Lock expirado detectado al cargar: \(expiredLock.accessoryName)")
