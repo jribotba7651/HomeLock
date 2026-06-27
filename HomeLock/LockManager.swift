@@ -33,8 +33,18 @@ struct LockConfiguration: Codable, Identifiable {
     }
 }
 
-enum LockManagerError: Error {
+enum LockManagerError: LocalizedError {
     case accessoryNotFound
+    case lutronNotSupported
+
+    var errorDescription: String? {
+        switch self {
+        case .accessoryNotFound:
+            return "Device not found."
+        case .lutronNotSupported:
+            return "Lutron devices are currently disabled in HomeLock because their HomeKit bridge loses connection too often, making locks unreliable. You can re-enable them from Settings → HomeKit if you're willing to accept this limitation."
+        }
+    }
 }
 
 /// Maneja la persistencia de locks usando UserDefaults
@@ -337,7 +347,7 @@ class LockManager: ObservableObject {
 
         guard !homeKit.isLutronDevice(accessory) else {
             print("🚫 [LockManager] Lutron device blocked: \(accessory.name)")
-            throw LockManagerError.accessoryNotFound
+            throw LockManagerError.lutronNotSupported
         }
 
         // 1. Set power state
@@ -625,7 +635,7 @@ class LockManager: ObservableObject {
             // Verificar si el estado es el deseado
             if currentState != config.lockedState {
                 print("🚨 [LockManager] Estado incorrecto detectado en \(config.accessoryName)!")
-                
+
                 // Log tamper attempt
                 logTamperAttempt(accessoryUUID: accessoryID, accessoryName: config.accessoryName)
 

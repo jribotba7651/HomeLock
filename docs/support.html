@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Support — HomeLock Smart</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:16px/1.7 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;color:#1d1d1f;background:#fff}
+.container{max-width:760px;margin:0 auto;padding:48px 24px}
+.back{color:#0071e3;text-decoration:none;font-size:14px;display:inline-block;margin-bottom:24px}
+h1{font-size:40px;font-weight:700;letter-spacing:-.02em;margin-bottom:8px}
+.subtitle{color:#86868b;font-size:18px;margin-bottom:40px}
+h2{font-size:24px;font-weight:600;margin-top:40px;margin-bottom:12px}
+h3{font-size:18px;font-weight:600;margin-top:24px;margin-bottom:8px}
+p,li{color:#1d1d1f;margin-bottom:12px}
+ul{padding-left:24px;margin-bottom:16px}
+strong{font-weight:600}
+a{color:#0071e3;text-decoration:none}
+a:hover{text-decoration:underline}
+.contact-card{background:#f5f5f7;padding:28px;border-radius:18px;margin:24px 0;text-align:center}
+.contact-card a{font-size:20px;font-weight:500}
+.faq-item{padding:20px 0;border-bottom:1px solid #d2d2d7}
+.faq-item:last-child{border-bottom:0}
+.faq-item h3{margin-top:0}
+footer{text-align:center;padding:48px 24px 0;color:#86868b;font-size:13px;border-top:1px solid #d2d2d7;margin-top:48px}
+</style>
+</head>
+<body>
+<div class="container">
+<a href="index.html" class="back">← Back to HomeLock</a>
+<h1>Support</h1>
+<p class="subtitle">Get help with HomeLock Smart.</p>
+
+<div class="contact-card">
+<p>Need help? Found a bug? Have a feature request?</p>
+<p style="margin-top:12px"><a href="mailto:jribot@gmail.com">jribot@gmail.com</a></p>
+<p style="font-size:13px;color:#86868b;margin-top:8px">We respond within 7 business days.</p>
+</div>
+
+<h2>Frequently Asked Questions</h2>
+
+<div class="faq-item">
+<h3>Which smart home devices does HomeLock work with?</h3>
+<p>HomeLock works with any HomeKit-compatible <strong>outlet, switch, or light</strong>. This includes brands like Lutron Caséta, Eve, Meross, Wemo, TP-Link Kasa (HomeKit models), Aqara, and many others. Cameras, doorbells, sensors, smart locks, garage doors, blinds, AC units, faucets, and sprinklers are not supported because the on/off lock paradigm doesn't apply to them.</p>
+</div>
+
+<div class="faq-item">
+<h3>Why don't I see all of my HomeKit devices?</h3>
+<p>By design, HomeLock filters out non-supported categories (cameras, sensors, smart locks, etc.). If you expect a device to appear and it's missing, make sure it's added to your Home in Apple's Home app first, and that it identifies as an outlet, switch, or light category.</p>
+</div>
+
+<div class="faq-item">
+<h3>How does Family Sharing work?</h3>
+<p>HomeLock uses iCloud's CloudKit Sharing. When you invite your spouse or family member from within the app, they receive an iMessage link. Tapping the link opens HomeLock on their device and accepts the share. After that, locks, schedules, and history sync between both devices in real time. The link expires after 7 days; if it expires, generate a new one from the Family screen.</p>
+</div>
+
+<div class="faq-item">
+<h3>Notifications take a long time to reach my spouse's iPhone.</h3>
+<p>Cross-user notification latency is typically 5–60 seconds. This is the time HomeKit takes to propagate state changes between iCloud accounts via Apple's infrastructure — it's not under HomeLock's control. If notifications take more than 2 minutes, check that both phones have a stable internet connection and that the family member's device is unlocked.</p>
+</div>
+
+<div class="faq-item">
+<h3>The lock command failed with an error.</h3>
+<p>Most failures come from the smart-home accessory itself. For Lutron Caséta specifically, the bridge may briefly time out under load — HomeLock retries automatically. If you consistently see errors with a specific device:</p>
+<ul>
+<li>Open the Apple Home app and confirm the device is reachable there.</li>
+<li>Reset the accessory by unplugging it for 30 seconds.</li>
+<li>For Lutron, check that your Lutron Caséta Bridge has a wired Ethernet connection.</li>
+<li>If the issue persists, email us with the device brand, model, and a screenshot of the error.</li>
+</ul>
+</div>
+
+<div class="faq-item">
+<h3>I forgot my PIN.</h3>
+<p>For security, HomeLock cannot recover a forgotten PIN. To reset, uninstall and reinstall the app. Your locks and schedules will resync from iCloud once you sign back in. Note that uninstalling does NOT remove your iCloud data.</p>
+</div>
+
+<div class="faq-item">
+<h3>How do I cancel my Pro subscription?</h3>
+<p>HomeLock Pro is a one-time purchase, not a subscription, so there is nothing to cancel. To request a refund, follow Apple's standard refund process at <a href="https://reportaproblem.apple.com" target="_blank">reportaproblem.apple.com</a>.</p>
+</div>
+
+<div class="faq-item">
+<h3>Does HomeLock work without internet?</h3>
+<p>Locking and unlocking devices on your local network works offline as long as your iPhone can reach the smart-home accessories directly. Family Sharing, iCloud sync, and Siri Shortcuts that route through Apple require an active internet connection.</p>
+</div>
+
+<div class="faq-item">
+<h3>How do I delete all my HomeLock data?</h3>
+<p>Uninstall the app to remove on-device data. To also remove iCloud data, go to <em>Settings → [Your Name] → iCloud → Manage Account Storage → HomeLock</em> and tap Delete Data.</p>
+</div>
+
+<h2>System Requirements</h2>
+<ul>
+<li>iOS 17 or later</li>
+<li>At least one HomeKit-compatible outlet, switch, or light</li>
+<li>iCloud account (for Family Sharing features)</li>
+<li>Face ID or Touch ID supported device (recommended for app-level lock)</li>
+</ul>
+
+<h2>Privacy</h2>
+<p>For details on what data the app accesses and how it is stored, see the <a href="privacy.html">Privacy Policy</a>.</p>
+
+<footer>
+<a href="index.html">Home</a> · <a href="privacy.html">Privacy Policy</a><br><br>
+© 2026 Juan Ribot. All rights reserved.
+</footer>
+</div>
+</body>
+</html>

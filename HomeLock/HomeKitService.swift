@@ -19,10 +19,43 @@ class HomeKitService: NSObject, ObservableObject {
     @Published var isAuthorized = false
     @Published var errorMessage: String?
 
+    /// Número de accesorios Lutron controlables que se están ocultando
+    /// por la política `ignoreLutronDevices`. La UI usa este valor para
+    /// mostrar un banner explicativo en el dashboard (en vez de silencio).
+    @Published var hiddenLutronCount: Int = 0
+
+    // MARK: - Lutron compatibility flag
+    //
+    // Los dispositivos Lutron (Caséta / RA3) a través de su bridge HomeKit son
+    // notoriamente inestables: el bridge pierde la conexión con el Home Hub,
+    // los triggers quedan huérfanos y los bloqueos no se aplican de forma fiable.
+    // Por defecto HomeLock los IGNORA por completo (no aparecen en el picker,
+    // no se pueden bloquear vía Shortcuts, no se sincronizan). El usuario puede
+    // reactivarlos desde Settings si Lutron publica un firmware/bridge nuevo
+    // que resuelva el problema de conectividad.
+    static let ignoreLutronDefaultsKey = "ignoreLutronDevices"
+
+    /// `true` (por defecto) = los dispositivos Lutron se excluyen de la app.
+    /// Lee directamente UserDefaults para poder usarse fuera de Views.
+    static var shouldIgnoreLutron: Bool {
+        // Default = true. Registramos el valor por defecto para que el primer
+        // lanzamiento también lo respete.
+        UserDefaults.standard.register(defaults: [ignoreLutronDefaultsKey: true])
+        return UserDefaults.standard.bool(forKey: ignoreLutronDefaultsKey)
+    }
+
     /// Detecta si un accesorio es de la marca Lutron
     func isLutronDevice(_ accessory: HMAccessory) -> Bool {
         let manufacturer = accessory.manufacturer?.lowercased() ?? ""
+        let model = accessory.model?.lowercased() ?? ""
+        // Cubrimos tanto "Lutron Electronics Co., Inc." como nombres de modelo
+        // tipo "Caséta" / "RA3" que a veces vienen con manufacturer vacío
+        // cuando el bridge expone accesorios puenteados.
         return manufacturer.contains("lutron")
+            || model.contains("caseta")
+            || model.contains("caséta")
+            || model.contains("ra2")
+            || model.contains("ra3")
     }
 
     /// Detecta si un accesorio es de la marca TP-Link/Kasa
@@ -62,14 +95,32 @@ class HomeKitService: NSObject, ObservableObject {
         }
     }
 
-    /// Filtra accesorios que tienen servicios controlables por encendido/apagado
+    /// Recalcula `outlets` aplicando los filtros actuales (incluido el de Lutron).
+    /// Llamar cuando el usuario cambia el toggle de compatibilidad desde Settings.
+    func refreshOutlets() {
+        self.outlets = filterOutlets(from: self.accessories)
+    }
+
+    /// Filtra accesorios que tienen servicios controlables por encendido/apagado.
+    /// Si `shouldIgnoreLutron` está activo (por defecto), también se excluye
+    /// cualquier accesorio fabricado por Lutron — ver nota en la declaración
+    /// de `shouldIgnoreLutron`. Actualiza `hiddenLutronCount` como efecto
+    /// secundario para que la UI pueda mostrar un aviso.
     private func filterOutlets(from accessories: [HMAccessory]) -> [HMAccessory] {
-        accessories.filter { accessory in
-            !isLutronDevice(accessory) &&
-            accessory.services.contains { service in
+        var hiddenLutron = 0
+        let filtered = accessories.filter { accessory in
+            let isControllable = accessory.services.contains { service in
                 service.characteristics.contains { $0.characteristicType == HMCharacteristicTypePowerState }
             }
+            guard isControllable else { return false }
+            if isLutronDevice(accessory) {
+                hiddenLutron += 1
+                return false
+            }
+            return true
         }
+        self.hiddenLutronCount = hiddenLutron
+        return filtered
     }
 
     /// Obtiene el servicio controlable (outlet/switch/light) de un accesorio

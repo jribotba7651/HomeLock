@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy Policy — HomeLock Smart</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:16px/1.7 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;color:#1d1d1f;background:#fff}
+.container{max-width:760px;margin:0 auto;padding:48px 24px}
+.back{color:#0071e3;text-decoration:none;font-size:14px;display:inline-block;margin-bottom:24px}
+h1{font-size:40px;font-weight:700;letter-spacing:-.02em;margin-bottom:8px}
+.updated{color:#86868b;font-size:14px;margin-bottom:32px}
+h2{font-size:24px;font-weight:600;margin-top:40px;margin-bottom:12px}
+h3{font-size:18px;font-weight:600;margin-top:24px;margin-bottom:8px}
+p,li{color:#1d1d1f;margin-bottom:12px}
+ul{padding-left:24px;margin-bottom:16px}
+strong{font-weight:600}
+a{color:#0071e3;text-decoration:none}
+a:hover{text-decoration:underline}
+footer{text-align:center;padding:48px 24px 0;color:#86868b;font-size:13px;border-top:1px solid #d2d2d7;margin-top:48px}
+</style>
+</head>
+<body>
+<div class="container">
+<a href="index.html" class="back">← Back to HomeLock</a>
+<h1>Privacy Policy</h1>
+<p class="updated">Last updated: April 25, 2026</p>
+
+<p>HomeLock Smart ("HomeLock", "we", "our", or "the app") is built around a simple principle: your data is yours. This Privacy Policy explains what information the app accesses, how it is stored, and what we do — and do not do — with it.</p>
+
+<h2>1. Summary</h2>
+<ul>
+<li>HomeLock <strong>does not operate any servers</strong>. We have no backend that collects, stores, or processes your data.</li>
+<li>HomeLock <strong>does not include any third-party analytics, tracking, or advertising SDKs</strong>.</li>
+<li>All app data is stored on your device or in <strong>your private iCloud account</strong>, controlled by Apple.</li>
+<li>We <strong>cannot see</strong> your locks, schedules, devices, history, or any other content within the app.</li>
+</ul>
+
+<h2>2. Data the app accesses</h2>
+
+<h3>HomeKit data</h3>
+<p>HomeLock requires access to your HomeKit home(s) so it can list your compatible accessories (outlets, switches, lights) and lock or unlock them. This access is granted by you through the iOS HomeKit permission prompt and can be revoked at any time in <em>Settings → Privacy & Security → HomeKit</em>. HomeKit data is managed by Apple and stored in your iCloud Keychain. HomeLock reads accessory state and writes power-on/off commands; it does not export, transmit, or sell HomeKit data.</p>
+
+<h3>iCloud (CloudKit) data</h3>
+<p>HomeLock uses CloudKit to synchronize locks, schedules, and activity history across your devices and, when enabled, with members of your Family Share. This data is stored in <strong>your private iCloud database</strong>, which is hosted by Apple and accessible only to you and the family members you explicitly invite. We do not have credentials to your iCloud account and cannot access this data.</p>
+
+<h3>Authentication data</h3>
+<p>HomeLock supports app-level authentication via Face ID, Touch ID, or a 6-digit PIN. Biometric authentication is performed entirely by Apple's LocalAuthentication framework — we never receive or store your biometric data. Your PIN is stored as a salted hash in the iOS Keychain on your device. The plaintext PIN is never stored, transmitted, or logged.</p>
+
+<h3>Notifications</h3>
+<p>If you grant notification permission, HomeLock displays local notifications when locks expire or family members trigger sync events. Notifications are generated locally on your device and are not routed through any third-party push service operated by us.</p>
+
+<h3>StoreKit (in-app purchases)</h3>
+<p>If you upgrade to HomeLock Pro, the transaction is processed by Apple via StoreKit. We receive only the receipt verification result from Apple. We do not see your payment information, billing address, or Apple ID.</p>
+
+<h3>Siri Shortcuts</h3>
+<p>HomeLock registers App Intents (Lock, Unlock, Status) with the iOS Shortcuts and Siri systems. When you trigger a shortcut, the request is routed locally on your device. Siri voice processing is performed by Apple, not by HomeLock.</p>
+
+<h2>3. Data we do NOT collect</h2>
+<ul>
+<li>Personal identifiers (name, email, phone number, address)</li>
+<li>Payment or billing information</li>
+<li>Device identifiers, advertising IDs, or fingerprinting data</li>
+<li>Crash reports or analytics — unless you voluntarily share them with Apple via the standard iOS diagnostics settings</li>
+<li>Location data</li>
+<li>Photos, contacts, calendar, microphone, or camera data</li>
+</ul>
+
+<h2>4. Children's privacy</h2>
+<p>HomeLock does not knowingly collect any data from children under 13. The app is designed to be installed and configured by adults to manage smart-home devices that may be used by children, but no child-specific data is collected, transmitted, or stored.</p>
+
+<h2>5. Family Sharing</h2>
+<p>When you invite a family member to share your HomeLock data via CloudKit Family Sharing, that family member can see and modify the same locks, schedules, and history that you can. This sharing is managed by Apple's CloudKit infrastructure under your control. You can revoke a family member's access at any time from within the app or by removing them from your iCloud Family in iOS Settings.</p>
+
+<h2>6. Data retention and deletion</h2>
+<p>App data lives on your device and in your private iCloud account for as long as you keep the app installed and your iCloud account active. To delete all HomeLock data:</p>
+<ul>
+<li>Uninstall the app to remove on-device data.</li>
+<li>Remove HomeLock data from iCloud via <em>Settings → [Your Name] → iCloud → Manage Account Storage → HomeLock</em>.</li>
+</ul>
+<p>Because we do not operate servers, there is no separate "account deletion" request needed — uninstalling and removing the iCloud container fully erases your data.</p>
+
+<h2>7. Security</h2>
+<p>HomeLock relies on Apple's platform security: data in transit is protected by HTTPS and CloudKit's transport encryption; data at rest is protected by iOS file encryption and Keychain. App access is gated behind biometric or PIN authentication when enabled.</p>
+
+<h2>8. Changes to this policy</h2>
+<p>We may update this Privacy Policy from time to time. Significant changes will be reflected in an updated app version and the "Last updated" date at the top of this page.</p>
+
+<h2>9. Contact</h2>
+<p>Questions, concerns, or data requests? Email <a href="mailto:jribot@gmail.com">jribot@gmail.com</a>. We respond within 7 business days.</p>
+
+<footer>
+<a href="index.html">Home</a> · <a href="support.html">Support</a><br><br>
+© 2026 Juan Ribot. All rights reserved.
+</footer>
+</div>
+</body>
+</html>
