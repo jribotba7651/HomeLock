@@ -17,7 +17,7 @@ class StoreManager: ObservableObject {
     @Published var isPro = false
     @Published var products: [Product] = []
 
-    private let productId = "com.jibaroenaluna.homelock.pro"
+    private let productId = "com.jibaroenlaluna.homelock.pro"
     private var transactionListener: Task<Void, Error>?
 
     private init() {

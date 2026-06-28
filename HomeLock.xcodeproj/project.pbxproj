@@ -27,6 +27,7 @@
 		9BBC99D72F0B50B900F2A1CD /* HomeLock.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HomeLock.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9BBC99E82F0B50BA00F2A1CD /* HomeLockTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HomeLockTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9BBC99F22F0B50BA00F2A1CD /* HomeLockUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HomeLockUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		494039816DF0C356FE83A4FD /* HomeLock.storekit */ = {isa = PBXFileReference; lastKnownFileType = text.plist.storekit; path = "HomeLock.storekit"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -91,6 +92,7 @@
 				9BBC99D92F0B50B900F2A1CD /* HomeLock */,
 				9BBC99EB2F0B50BA00F2A1CD /* HomeLockTests */,
 				9BBC99F52F0B50BA00F2A1CD /* HomeLockUITests */,
+				494039816DF0C356FE83A4FD /* HomeLock.storekit */,
 				9BBC99D82F0B50B900F2A1CD /* Products */,
 			);
 			sourceTree = "<group>";

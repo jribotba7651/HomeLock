@@ -1,0 +1,51 @@
+{
+  "appPolicies": {
+    "eula": "",
+    "policies": [
+      {
+        "locale": "en_US",
+        "policyText": "",
+        "policyURL": ""
+      }
+    ]
+  },
+  "identifier": "EB531C3E",
+  "nonRenewingSubscriptions": [],
+  "products": [
+    {
+      "displayPrice": "9.99",
+      "familyShareable": false,
+      "internalID": "AB53C1D4",
+      "localizations": [
+        {
+          "description": "Unlock all HomeLock Pro features with unlimited schedules and priority support.",
+          "displayName": "HomeLock Pro",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.jibaroenlaluna.homelock.pro",
+      "referenceName": "HomeLock Pro",
+      "type": "NonConsumable"
+    }
+  ],
+  "settings": {
+    "_applicationInternalID": "6758026582",
+    "_askToBuyEnabled": false,
+    "_billingGracePeriodEnabled": false,
+    "_billingIssuesEnabled": false,
+    "_developerTeamID": "696M9GC74E",
+    "_disableDialogs": false,
+    "_failTransactionsEnabled": false,
+    "_lastSynchronizedDate": 804297620.01666,
+    "_locale": "en_US",
+    "_renewalBillingIssuesEnabled": false,
+    "_storeKitErrors": [],
+    "_storefront": "USA",
+    "_timeRate": 0
+  },
+  "subscriptionGroups": [],
+  "version": {
+    "major": 5,
+    "minor": 0
+  }
+}
