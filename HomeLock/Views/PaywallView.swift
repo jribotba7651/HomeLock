@@ -10,6 +10,7 @@ struct PaywallView: View {
     @ObservedObject var storeManager = StoreManager.shared
     @Binding var isPresented: Bool
     @State private var isPurchasing = false
+    @State private var isRestoring = false
     @State private var showError = false
     @State private var errorMessage = ""
 
@@ -200,13 +201,15 @@ struct PaywallView: View {
                             .cornerRadius(18)
                             .shadow(color: .blue.opacity(0.3), radius: 10, y: 5)
                         }
-                        .disabled(isPurchasing)
+                        .disabled(isPurchasing || isRestoring)
 
                         // Secondary actions
                         HStack(spacing: 30) {
                             Button {
                                 Task {
+                                    isRestoring = true
                                     await storeManager.restorePurchases()
+                                    isRestoring = false
                                     if storeManager.isPro {
                                         withAnimation {
                                             isPresented = false
@@ -214,10 +217,17 @@ struct PaywallView: View {
                                     }
                                 }
                             } label: {
-                                Text("Restore")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.6))
+                                if isRestoring {
+                                    ProgressView()
+                                        .tint(.white)
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Text("Restore")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.6))
+                                }
                             }
+                            .disabled(isPurchasing || isRestoring)
 
                             Button {
                                 withAnimation {
@@ -228,6 +238,7 @@ struct PaywallView: View {
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundColor(.white.opacity(0.4))
                             }
+                            .disabled(isRestoring)
                         }
                         .padding(.top, 8)
                     }

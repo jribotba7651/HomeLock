@@ -76,7 +76,7 @@
          </BuildableReference>
       </BuildableProductRunnable>
       <StoreKitConfigurationFileReference
-         identifier = "494039816DF0C356FE83A4FD">
+         identifier = "../../HomeLock.storekit">
       </StoreKitConfigurationFileReference>
    </LaunchAction>
    <ProfileAction
