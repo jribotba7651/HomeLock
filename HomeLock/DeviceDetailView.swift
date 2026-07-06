@@ -8,36 +8,6 @@
 import SwiftUI
 import HomeKit
 
-enum LockDuration: String, CaseIterable, Identifiable {
-    case fifteenMinutes = "15 min"
-    case thirtyMinutes = "30 min"
-    case oneHour = "1 hour"
-    case twoHours = "2 hours"
-    case untilUnlock = "Until I unlock"
-
-    var id: String { rawValue }
-
-    var seconds: TimeInterval? {
-        switch self {
-        case .fifteenMinutes: return 15 * 60
-        case .thirtyMinutes: return 30 * 60
-        case .oneHour: return 60 * 60
-        case .twoHours: return 2 * 60 * 60
-        case .untilUnlock: return nil
-        }
-    }
-
-    var displayName: String {
-        switch self {
-        case .fifteenMinutes: return String(localized: "15 min")
-        case .thirtyMinutes: return String(localized: "30 min")
-        case .oneHour: return String(localized: "1 hour")
-        case .twoHours: return String(localized: "2 hours")
-        case .untilUnlock: return String(localized: "Until I unlock")
-        }
-    }
-}
-
 struct DeviceDetailView: View {
     let accessory: HMAccessory
     @ObservedObject var homeKit: HomeKitService
@@ -46,13 +16,32 @@ struct DeviceDetailView: View {
     @State private var isOn: Bool = false
     @State private var isLoading: Bool = true
     @State private var isLocking: Bool = false
-    @State private var selectedDuration: LockDuration = .thirtyMinutes
     @State private var lockToState: Bool = false
     @State private var showingLockConfirmation: Bool = false
     @State private var errorMessage: String?
     @State private var showingError: Bool = false
+    
+    // New duration states
+    @State private var durationHours: Int = 0
+    @State private var durationMinutes: Int = 30
+    @State private var durationSeconds: Int = 0
+    @State private var lockIndefinitely: Bool = false
 
     @Environment(\.dismiss) private var dismiss
+
+    private var totalDurationSeconds: TimeInterval {
+        TimeInterval(durationHours * 3600 + durationMinutes * 60 + durationSeconds)
+    }
+
+    private var selectedDurationString: String {
+        if durationHours > 0 {
+            return "\(durationHours)h \(durationMinutes)m \(durationSeconds)s"
+        } else if durationMinutes > 0 {
+            return "\(durationMinutes)m \(durationSeconds)s"
+        } else {
+            return "\(durationSeconds)s"
+        }
+    }
 
     private var lockConfig: LockConfiguration? {
         lockManager.getLock(for: accessory.uniqueIdentifier)
@@ -116,13 +105,64 @@ struct DeviceDetailView: View {
                         Text(String(localized: "On")).tag(true)
                     }
                     .pickerStyle(.segmented)
+                    .padding(.vertical, 8)
 
-                    // Duration selector
-                    Picker(String(localized: "Duration"), selection: $selectedDuration) {
-                        ForEach(LockDuration.allCases) { duration in
-                            Text(duration.displayName).tag(duration)
+                    // Duration selector (Native Style)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle(isOn: $lockIndefinitely) {
+                            Label(String(localized: "Lock indefinitely"), systemImage: "infinity")
+                                .font(.subheadline)
+                        }
+                        .tint(.orange)
+                        
+                        if !lockIndefinitely {
+                            HStack(spacing: 0) {
+                                Spacer()
+                                Picker("Hours", selection: $durationHours) {
+                                    ForEach(0..<24) { i in
+                                        Text("\(i)").tag(i)
+                                    }
+                                }
+                                .pickerStyle(.wheel)
+                                .frame(width: 50)
+                                .clipped()
+                                Text(String(localized: "hours"))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .padding(.trailing, 10)
+
+                                Picker("Min", selection: $durationMinutes) {
+                                    ForEach(0..<60) { i in
+                                        Text("\(i)").tag(i)
+                                    }
+                                }
+                                .pickerStyle(.wheel)
+                                .frame(width: 50)
+                                .clipped()
+                                Text(String(localized: "min"))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .padding(.trailing, 10)
+
+                                Picker("Sec", selection: $durationSeconds) {
+                                    ForEach(0..<60) { i in
+                                        Text("\(i)").tag(i)
+                                    }
+                                }
+                                .pickerStyle(.wheel)
+                                .frame(width: 50)
+                                .clipped()
+                                Text(String(localized: "sec"))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                Spacer()
+                            }
+                            .frame(height: 120)
+                            .mask(LinearGradient(gradient: Gradient(colors: [.clear, .black, .black, .clear]), startPoint: .top, endPoint: .bottom))
                         }
                     }
+                    .listRowBackground(Color.secondary.opacity(0.05))
 
                     // Lock button
                     Button {
@@ -139,10 +179,12 @@ struct DeviceDetailView: View {
                             Text(String(localized: "Lock device"))
                             Spacer()
                         }
+                        .font(.headline)
+                        .padding(.vertical, 4)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
-                    .disabled(isLocking)
+                    .disabled(isLocking || (!lockIndefinitely && totalDurationSeconds == 0))
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0))
                 }
@@ -170,14 +212,14 @@ struct DeviceDetailView: View {
             isPresented: $showingLockConfirmation,
             titleVisibility: .visible
         ) {
-            Button(String(localized: "Lock for \(selectedDuration.displayName)")) {
+            Button(String(localized: lockIndefinitely ? "Lock indefinitely" : "Lock for \(selectedDurationString)")) {
                 Task {
                     await lockDevice()
                 }
             }
             Button(String(localized: "Cancel"), role: .cancel) { }
         } message: {
-            Text(String(localized: "The device will be kept \(lockToState ? "on" : "off") for \(selectedDuration.displayName.lowercased())."))
+            Text(String(localized: "The device will be kept \(lockToState ? "on" : "off") \(lockIndefinitely ? "indefinitely" : "for " + selectedDurationString)."))
         }
         .alert(String(localized: "Error"), isPresented: $showingError) {
             Button("OK") { }
@@ -213,7 +255,7 @@ struct DeviceDetailView: View {
                 accessoryName: accessory.name,
                 triggerID: triggerID,
                 lockedState: lockToState,
-                duration: selectedDuration.seconds
+                duration: lockIndefinitely ? nil : totalDurationSeconds
             )
 
             print("DeviceDetailView: Lock activated successfully")

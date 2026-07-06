@@ -28,10 +28,31 @@ class HomeKitService: NSObject, ObservableObject {
         homeManager?.delegate = self
     }
 
+    /// Determina si un accesorio es de la marca Lutron
+    func isLutronDevice(_ accessory: HMAccessory) -> Bool {
+        let lutronIdentifiers = ["lutron", "caséta", "caseta", "ra2", "radiora"]
+        let manufacturer = accessory.manufacturer?.lowercased() ?? ""
+        let name = accessory.name.lowercased()
+        let model = accessory.model?.lowercased() ?? ""
+
+        return lutronIdentifiers.contains { identifier in
+            manufacturer.contains(identifier) || name.contains(identifier) || model.contains(identifier)
+        }
+    }
+
     /// Filtra accesorios que tienen servicios de tipo outlet o switch
     private func filterOutlets(from accessories: [HMAccessory]) -> [HMAccessory] {
         accessories.filter { accessory in
-            accessory.services.contains { service in
+            // Re-incluimos Lutron ya que ahora el polling es más lento (60s)
+            // y usamos eventos, lo cual es más seguro para el bridge.
+            /*
+            guard !isLutronDevice(accessory) else {
+                print("⚠️ [HomeLock] Excluyendo dispositivo Lutron del filtro: \(accessory.name)")
+                return false
+            }
+            */
+
+            return accessory.services.contains { service in
                 service.serviceType == HMServiceTypeOutlet ||
                 service.serviceType == HMServiceTypeSwitch ||
                 service.serviceType == HMServiceTypeLightbulb
@@ -55,6 +76,8 @@ class HomeKitService: NSObject, ObservableObject {
 
     /// Lee el estado actual (on/off) de un accesorio
     func isAccessoryOn(_ accessory: HMAccessory) async -> Bool? {
+        print("🔄 [HomeLock] Consultando estado de: \(accessory.name) at \(Date())")
+        
         guard let service = getControllableService(for: accessory),
               let powerState = getPowerStateCharacteristic(for: service) else {
             return nil
@@ -62,21 +85,26 @@ class HomeKitService: NSObject, ObservableObject {
 
         do {
             try await powerState.readValue()
-            return powerState.value as? Bool
+            let value = powerState.value as? Bool
+            print("✓ [HomeLock] Estado de \(accessory.name): \(value == true ? "ON" : "OFF")")
+            return value
         } catch {
-            print("Error reading power state: \(error)")
+            print("❌ [HomeLock] Error reading power state for \(accessory.name): \(error)")
             return nil
         }
     }
 
     /// Cambia el estado de un accesorio
     func setAccessoryPower(_ accessory: HMAccessory, on: Bool) async throws {
+        print("✍️ [HomeLock] Escribiendo valor \(on ? "ON" : "OFF") a: \(accessory.name) at \(Date())")
+        
         guard let service = getControllableService(for: accessory),
               let powerState = getPowerStateCharacteristic(for: service) else {
             throw HomeKitError.serviceNotFound
         }
 
         try await powerState.writeValue(on)
+        print("✅ [HomeLock] Valor escrito exitosamente en \(accessory.name)")
     }
 
     // MARK: - Lock Trigger Management
@@ -513,8 +541,18 @@ extension HomeKitService: HMHomeManagerDelegate {
             self.accessories = allAccessories
             self.outlets = filterOutlets(from: allAccessories)
 
-            print("🏠 [HomeKit] ========== HOMES ACTUALIZADOS ==========")
-            print("🏠 [HomeKit] \(homes.count) homes, \(accessories.count) accessories, \(outlets.count) outlets/switches")
+            // Debug: listar todos los accesorios para diagnóstico
+            print("📱 [HomeLock] ===== CARGANDO DISPOSITIVOS =====")
+            for accessory in allAccessories {
+                let isLutron = self.isLutronDevice(accessory)
+                let status = isLutron ? "🚫 (EXCLUIDO)" : "✅"
+                print("📱 [HomeLock] \(status) Dispositivo: \(accessory.name)")
+                print("📱 [HomeLock]   - Manufacturer: \(accessory.manufacturer ?? "unknown")")
+                print("📱 [HomeLock]   - Model: \(accessory.model ?? "unknown")")
+                print("📱 [HomeLock]   - Reachable: \(accessory.isReachable)")
+                print("📱 [HomeLock]   - Bridged: \(accessory.isBridged)")
+                print("📱 [HomeLock]   - Services count: \(accessory.services.count)")
+            }
 
             // Debug: listar todos los triggers existentes
             for home in manager.homes {
@@ -522,25 +560,8 @@ extension HomeKitService: HMHomeManagerDelegate {
                 print("   Triggers: \(home.triggers.count)")
                 for trigger in home.triggers {
                     let enabled = trigger.isEnabled ? "✅" : "❌"
-                    print("   \(enabled) \(trigger.name) (UUID: \(trigger.uniqueIdentifier))")
-                    if let eventTrigger = trigger as? HMEventTrigger {
-                        print("      Events: \(eventTrigger.events.count)")
-                        for event in eventTrigger.events {
-                            if let charEvent = event as? HMCharacteristicEvent<NSCopying> {
-                                print("      - CharEvent: triggerValue=\(String(describing: charEvent.triggerValue))")
-                            }
-                        }
-                        print("      ActionSets: \(eventTrigger.actionSets.count)")
-                        for actionSet in eventTrigger.actionSets {
-                            print("      - \(actionSet.name): \(actionSet.actions.count) actions")
-                        }
-                    }
-                }
-                print("   ActionSets: \(home.actionSets.count)")
-                for actionSet in home.actionSets {
-                    if actionSet.name.hasPrefix("HomeLock") {
-                        print("   - \(actionSet.name): \(actionSet.actions.count) actions")
-                    }
+                    let isHomeLock = trigger.name.hasPrefix("HomeLock_") ? "🔒" : "  "
+                    print("   \(enabled) \(isHomeLock) \(trigger.name) (UUID: \(trigger.uniqueIdentifier))")
                 }
             }
             print("🏠 [HomeKit] ==========================================")

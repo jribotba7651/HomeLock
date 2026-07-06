@@ -9,12 +9,20 @@ import SwiftUI
 import HomeKit
 
 struct ContentView: View {
-    @StateObject private var homeKit = HomeKitService()
+    @ObservedObject var homeKit: HomeKitService
     @ObservedObject private var lockManager = LockManager.shared
 
     @State private var showingCleanupConfirmation = false
     @State private var isCleaningUp = false
     @State private var cleanupResult: Int?
+
+    // Group accessories by room name
+    private var groupedOutlets: [(String, [HMAccessory])] {
+        let grouped = Dictionary(grouping: homeKit.outlets) { 
+            $0.room?.name ?? String(localized: "Other") 
+        }
+        return grouped.sorted { $0.key < $1.key }
+    }
 
     var body: some View {
         NavigationStack {
@@ -32,17 +40,27 @@ struct ContentView: View {
                         description: Text(String(localized: "No outlets, switches, or lights found in your HomeKit"))
                     )
                 } else {
-                    List(homeKit.outlets, id: \.uniqueIdentifier) { accessory in
-                        NavigationLink {
-                            DeviceDetailView(accessory: accessory, homeKit: homeKit)
-                        } label: {
-                            AccessoryRow(
-                                accessory: accessory,
-                                homeKit: homeKit,
-                                lockManager: lockManager
-                            )
+                    List {
+                        ForEach(groupedOutlets, id: \.0) { roomName, accessories in
+                            Section(header: Text(roomName)
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                                .textCase(nil)) {
+                                ForEach(accessories, id: \.uniqueIdentifier) { accessory in
+                                    NavigationLink {
+                                        DeviceDetailView(accessory: accessory, homeKit: homeKit)
+                                    } label: {
+                                        AccessoryRow(
+                                            accessory: accessory,
+                                            homeKit: homeKit,
+                                            lockManager: lockManager
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
+                    .listStyle(.insetGrouped)
                 }
             }
             .navigationTitle("HomeLock")
@@ -63,14 +81,30 @@ struct ContentView: View {
                         }
                     }
                 }
+                
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack {
-                        Image(systemName: homeKit.isAuthorized ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(homeKit.isAuthorized ? .green : .secondary)
-                        Text("\(homeKit.outlets.count)")
-                            .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        // Settings Gear indicator
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 14))
+                            .padding(6)
+                            .background(Color.blue.opacity(0.2))
+                            .clipShape(Circle())
+                            .foregroundStyle(.blue)
+                        
+                        // Status Pill indicator
+                        HStack(spacing: 4) {
+                            Image(systemName: homeKit.isAuthorized ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(homeKit.isAuthorized ? .green : .secondary)
+                            Text("\(homeKit.outlets.count)")
+                                .font(.caption2.monospacedDigit())
+                                .fontWeight(.bold)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.1))
+                        .clipShape(Capsule())
                     }
-                    .font(.caption)
                 }
             }
             .confirmationDialog(
@@ -153,12 +187,11 @@ struct AccessoryRow: View {
             }
             .frame(width: 20)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(accessory.name)
                         .font(.headline)
 
-                    // Lock indicator
                     if isLocked {
                         Image(systemName: "lock.fill")
                             .foregroundStyle(.orange)
@@ -166,18 +199,10 @@ struct AccessoryRow: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    if let room = accessory.room {
-                        Text(room.name)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if !isLoading {
-                        Text(isOn ? String(localized: "On") : String(localized: "Off"))
-                            .font(.caption)
-                            .foregroundStyle(isOn ? .green : .secondary)
-                    }
+                if !isLoading {
+                    Text(isOn ? String(localized: "On") : String(localized: "Off"))
+                        .font(.caption2)
+                        .foregroundStyle(isOn ? .green : .secondary)
                 }
             }
 
@@ -193,6 +218,7 @@ struct AccessoryRow: View {
     }
 }
 
+
 #Preview {
-    ContentView()
+    ContentView(homeKit: HomeKitService())
 }

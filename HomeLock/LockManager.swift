@@ -33,7 +33,7 @@ struct LockConfiguration: Codable, Identifiable {
 
 /// Maneja la persistencia de locks usando UserDefaults
 @MainActor
-class LockManager: ObservableObject {
+class LockManager: NSObject, ObservableObject, HMAccessoryDelegate {
     static let shared = LockManager()
 
     @Published private(set) var locks: [UUID: LockConfiguration] = [:] // accessoryID -> config
@@ -44,11 +44,12 @@ class LockManager: ObservableObject {
 
     // MARK: - Polling (Fallback for HMEventTrigger)
     private var pollingTimer: Timer?
-    private let pollingInterval: TimeInterval = 5.0 // Check every 5 seconds
+    private let pollingInterval: TimeInterval = 60.0 // Reduced from 5s to 60s to avoid saturating bridges (like Lutron)
     private var isPolling = false
     private var isEnforcing = false // Prevent overlapping enforcement
 
-    private init() {
+    private override init() {
+        super.init()
         loadLocks()
     }
 
@@ -68,14 +69,40 @@ class LockManager: ObservableObject {
 
         self.homeKitService = homeKitService
 
+        // Configurar delegados para accesorios ya lockeados
+        for accessory in homeKitService.accessories {
+            if locks.keys.contains(accessory.uniqueIdentifier) {
+                setupAccessoryMonitoring(accessory)
+            }
+        }
+
         // Verificar locks expirados al iniciar
         Task { [weak self] in
             await self?.checkExpiredLocks()
         }
 
-        // Iniciar polling si hay locks activos
+        // Iniciar polling si hay locks activos (como fallback ligero)
         if !locks.isEmpty {
             startPolling()
+        }
+    }
+
+    private func setupAccessoryMonitoring(_ accessory: HMAccessory) {
+        print("🔍 [LockManager] Configurando monitoreo para: \(accessory.name)")
+        accessory.delegate = self
+        
+        // Habilitar notificaciones para la característica de power state
+        if let homeKit = homeKitService,
+           let service = homeKit.getControllableService(for: accessory),
+           let characteristic = homeKit.getPowerStateCharacteristic(for: service) {
+            
+            characteristic.enableNotification(true) { error in
+                if let error {
+                    print("⚠️ [LockManager] Error habilitando notificaciones para \(accessory.name): \(error.localizedDescription)")
+                } else {
+                    print("✅ [LockManager] Notificaciones habilitadas para \(accessory.name)")
+                }
+            }
         }
     }
 
@@ -107,9 +134,20 @@ class LockManager: ObservableObject {
         // Programar expiración si tiene tiempo límite
         if let expiresAt {
             scheduleExpiration(for: accessoryID, at: expiresAt)
+            NotificationManager.shared.scheduleExpirationNotification(
+                for: accessoryName,
+                accessoryID: accessoryID,
+                at: expiresAt
+            )
         }
 
-        // Iniciar polling
+        // Configurar monitoreo inmediato
+        if let homeKit = homeKitService,
+           let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
+            setupAccessoryMonitoring(accessory)
+        }
+
+        // Iniciar polling si no estaba corriendo
         startPolling()
 
         print("🔒 [LockManager] Lock agregado para \(accessoryName), expira: \(expiresAt?.description ?? "nunca")")
@@ -122,10 +160,20 @@ class LockManager: ObservableObject {
         // Cancelar timer de expiración
         expirationTimers[accessoryID]?.invalidate()
         expirationTimers.removeValue(forKey: accessoryID)
+        NotificationManager.shared.cancelNotification(for: accessoryID)
 
         // Eliminar trigger de HomeKit (best effort, polling is the real enforcement)
         if let homeKit = homeKitService,
            let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
+            
+            // Limpiar monitoreo
+            print("🔍 [LockManager] Deteniendo monitoreo para: \(accessory.name)")
+            accessory.delegate = nil
+            if let service = homeKit.getControllableService(for: accessory),
+               let characteristic = homeKit.getPowerStateCharacteristic(for: service) {
+                characteristic.enableNotification(false) { _ in }
+            }
+            
             do {
                 try await homeKit.removeLockTrigger(triggerID: config.triggerID, for: accessory)
             } catch {
@@ -180,6 +228,7 @@ class LockManager: ObservableObject {
                 return
             }
             Task { @MainActor [weak self] in
+                print("🔄 [LockManager] Periodic poll enforcement starting...")
                 await self?.enforceAllLocks()
             }
         }
@@ -210,51 +259,57 @@ class LockManager: ObservableObject {
         defer { isEnforcing = false }
 
         guard let homeKit = homeKitService else {
-            print("⚠️ [LockManager] HomeKitService no disponible")
             return
         }
 
-        // Capturar locks al inicio para evitar mutación durante iteración
         let currentLocks = locks
 
         for (accessoryID, config) in currentLocks {
-            // Verificar si expiró
             if config.isExpired {
-                print("⏰ [LockManager] Lock expirado durante polling: \(config.accessoryName)")
                 await removeLock(for: accessoryID)
                 continue
             }
 
-            // Buscar el accesorio
             guard let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) else {
-                print("⚠️ [LockManager] Accesorio no encontrado: \(config.accessoryName)")
                 continue
             }
 
-            // Leer estado actual
+            // En el polling ahora solo leemos si es necesario o para verificar
+            // pero siendo mucho más conservadores (60s interval)
             guard let currentState = await homeKit.isAccessoryOn(accessory) else {
-                print("⚠️ [LockManager] No se pudo leer estado de: \(config.accessoryName)")
                 continue
             }
 
-            // Verificar si el estado es el deseado
             if currentState != config.lockedState {
-                print("🚨 [LockManager] Estado incorrecto detectado!")
-                print("   Dispositivo: \(config.accessoryName)")
-                print("   Estado actual: \(currentState ? "ON" : "OFF")")
-                print("   Estado deseado: \(config.lockedState ? "ON" : "OFF")")
-                print("   ➡️ Revirtiendo...")
+                print("🚨 [LockManager] POLLING: Estado incorrecto detectado en \(config.accessoryName)!")
+                await enforceLock(accessory, config: config)
+            }
+        }
+    }
 
-                // Revertir al estado bloqueado
-                do {
-                    try await homeKit.setAccessoryPower(accessory, on: config.lockedState)
-                    print("✅ [LockManager] Revertido exitosamente a \(config.lockedState ? "ON" : "OFF")")
-                } catch {
-                    print("❌ [LockManager] Error revirtiendo: \(error.localizedDescription)")
+    private func enforceLock(_ accessory: HMAccessory, config: LockConfiguration) async {
+        guard let homeKit = homeKitService else { return }
+        
+        do {
+            try await homeKit.setAccessoryPower(accessory, on: config.lockedState)
+            print("✅ [LockManager] Revertido exitosamente a \(config.lockedState ? "ON" : "OFF")")
+        } catch {
+            print("❌ [LockManager] Error revirtiendo: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - HMAccessoryDelegate
+
+    nonisolated func accessory(_ accessory: HMAccessory, didUpdateValueFor characteristic: HMCharacteristic) {
+        Task { @MainActor in
+            guard let config = locks[accessory.uniqueIdentifier] else { return }
+            
+            if characteristic.characteristicType == HMCharacteristicTypePowerState {
+                if let newValue = characteristic.value as? Bool, newValue != config.lockedState {
+                    print("🚨 [LockManager] EVENTO: Cambio detectado en \(accessory.name) (\(newValue ? "ON" : "OFF"))")
+                    print("   ➡️ Aplicando bloqueo...")
+                    await enforceLock(accessory, config: config)
                 }
-            } else {
-                // Estado correcto, log silencioso
-                // print("✓ [LockManager] \(config.accessoryName): OK")
             }
         }
     }
@@ -321,6 +376,16 @@ class LockManager: ObservableObject {
         guard let config = locks[accessoryID] else { return }
         print("⏰ [LockManager] Lock expirado para \(config.accessoryName)")
         await removeLock(for: accessoryID)
+    }
+
+    /// Versión simplificada para background tasks
+    func checkExpiredLocksInBackground() async {
+        print("🗓️ [LockManager] Checking for expired locks in background...")
+        let expiredIDs = locks.filter { $0.value.isExpired }.map { $0.key }
+        
+        for id in expiredIDs {
+            await handleExpiration(for: id)
+        }
     }
 
     private func checkExpiredLocks() async {
