@@ -5,7 +5,7 @@
   ],
   "products" : [
     {
-      "displayPrice" : "4.99",
+      "displayPrice" : "9.99",
       "familyShareable" : true,
       "internalID" : "HOMELOCK_PRO_001",
       "localizations" : [
@@ -20,7 +20,7 @@
           "locale" : "es_ES"
         }
       ],
-      "productID" : "com.jibaroenaluna.homelock.pro",
+      "productID" : "com.jibaroenlaluna.homelock.pro",
       "referenceName" : "HomeLock Pro",
       "type" : "NonConsumable"
     }
