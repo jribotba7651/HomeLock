@@ -70,7 +70,8 @@ struct HomeLockApp: App {
             if newPhase == .active {
                 print("📱 [HomeLockApp] App became active, clearing badge count")
                 Task {
-                     try? await UNUserNotificationCenter.current().setBadgeCount(0)
+                    try? await UNUserNotificationCenter.current().setBadgeCount(0)
+                    await LockManager.shared.syncFromHomeKit()
                 }
             }
         }

@@ -307,17 +307,20 @@ struct DeviceDetailView: View {
         let isLutron = homeKit.isLutronDevice(accessory)
 
         do {
+            // Compute expiresAt before trigger creation so it embeds in the trigger name
+            let expiresAt = selectedDuration.map { Date().addingTimeInterval($0) }
+
             let triggerID: UUID
             if isLutron {
                 // Serialize through the bridge gatekeeper to avoid saturating the
                 // Caséta Smart Hub's Clear Connect radio with parallel writes.
                 triggerID = try await LutronBridgeGatekeeper.shared.run(for: accessory) {
                     try await homeKit.setAccessoryPower(accessory, on: lockToState)
-                    return try await homeKit.createLockTrigger(for: accessory, lockedState: lockToState)
+                    return try await homeKit.createLockTrigger(for: accessory, lockedState: lockToState, expiresAt: expiresAt)
                 }
             } else {
                 try await homeKit.setAccessoryPower(accessory, on: lockToState)
-                triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: lockToState)
+                triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: lockToState, expiresAt: expiresAt)
             }
 
             await MainActor.run {
