@@ -218,10 +218,16 @@ class LockManager: ObservableObject {
         let homeKit = HomeKitService.shared
 
         isSyncing = true
-        defer {
-            isSyncing = false
-            lastSyncTime = Date()
+        defer { isSyncing = false }
+
+        // Readiness: never reconcile against a HomeKit that hasn't loaded yet —
+        // an empty trigger list would wipe every local lock.
+        await homeKit.waitServiceReady()
+        guard homeKit.isAuthorized, !homeKit.homes.isEmpty else {
+            print("⏭️ [LockManager Sync] HomeKit not ready (authorized: \(homeKit.isAuthorized), homes: \(homeKit.homes.count)) — aborting sync, no changes")
+            return false
         }
+        defer { lastSyncTime = Date() }
 
         print("🔄 [LockManager Sync] Iniciando sincronización desde HomeKit (source of truth)...")
 

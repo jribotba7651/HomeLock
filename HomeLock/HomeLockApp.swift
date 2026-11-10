@@ -69,8 +69,10 @@ struct HomeLockApp: App {
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 print("📱 [HomeLockApp] App became active, clearing badge count")
-                Task {
+                Task { @MainActor in
                     try? await UNUserNotificationCenter.current().setBadgeCount(0)
+                    // Wait for HomeKit to be ready before syncing
+                    await HomeKitService.shared.waitServiceReady()
                     await LockManager.shared.syncFromHomeKit()
                 }
             }
