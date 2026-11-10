@@ -2,8 +2,11 @@
 //  ProPurchaseTests.swift
 //  HomeLockTests
 //
-//  Runs the real StoreManager purchase / restore paths against the local
+//  Runs StoreManager's entitlement and restore paths against the local
 //  StoreKit configuration (HomeLock/Configuration.storekit) via SKTestSession.
+//  The purchase itself is made with SKTestSession.buyProduct: calling
+//  Product.purchase() from a hosted unit test can hang when the host app has
+//  a modal (the first-launch paywall) up and StoreKit finds no UI anchor.
 //
 
 import Testing
@@ -20,7 +23,7 @@ struct ProPurchaseTests {
         .deletingLastPathComponent()      // repo root
         .appendingPathComponent("HomeLock/Configuration.storekit")
 
-    @Test func purchaseThenRestoreUnlocksPro() async throws {
+    @Test(.timeLimit(.minutes(1))) func purchaseThenRestoreUnlocksPro() async throws {
         let session = try SKTestSession(contentsOf: Self.configURL)
         session.disableDialogs = true
         session.clearTransactions()
@@ -39,7 +42,8 @@ struct ProPurchaseTests {
         #expect(product.displayPrice == "$9.99")
 
         // Purchase unlocks Pro; Pro-gated lock limit is lifted.
-        try await store.purchase()
+        _ = try await session.buyProduct(identifier: product.id, options: [])
+        await store.checkEntitlement()
         #expect(store.isPro == true)
         #expect(LockManager.shared.canAddLock == true)
 

@@ -302,7 +302,11 @@ class AuthenticationManager: ObservableObject {
     // MARK: - App Lifecycle
 
     private func setupBackgroundObserver() {
-        NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
+        // Lock only when the app actually goes to the background (scenePhase
+        // .background). willResignActive / .inactive also fires for system
+        // sheets — StoreKit purchase, Face ID, notification banners, Control
+        // Center — and must not lock the app behind them.
+        NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
             .sink { [weak self] _ in
                 self?.lockApp()
             }

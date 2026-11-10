@@ -62,6 +62,74 @@ final class FirstLaunchScreenshotTests: XCTestCase {
         keep(app, "5-unlock-pin")
         enter("3456", in: app)
         XCTAssertTrue(waitForNonExistence(app.staticTexts["Welcome Back"], timeout: 5), "PIN unlock failed")
+
+        // With a PIN set, reopen the paywall (RootView shows it on every 5th launch).
+        var paywallShown = false
+        for _ in 0..<6 where !paywallShown {
+            app.terminate()
+            app.launch()
+            if app.staticTexts["Welcome Back"].waitForExistence(timeout: 4) { enter("123456", in: app) }
+            paywallShown = waitDismissingAlerts(for: proTitle, springboard: springboard, timeout: 6)
+        }
+        XCTAssertTrue(paywallShown, "Paywall did not reappear by launch 5")
+
+        // Tapping Unlock Pro brings up a system purchase / sign-in sheet; the
+        // app resigns active but must NOT lock.
+        app.buttons["Unlock Pro"].tap()
+        let systemSheet = springboard.alerts.firstMatch
+        XCTAssertTrue(systemSheet.waitForExistence(timeout: 15), "No system purchase sheet appeared")
+        sleep(1)
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertFalse(app.staticTexts["Welcome Back"].exists, "App locked behind the purchase sheet")
+        keep(XCUIScreen.main, "6-purchase-sheet-no-lock")
+        systemSheet.buttons["Cancel"].firstMatch.tap()
+        for _ in 0..<3 { dismissAlerts(springboard); sleep(1) }   // follow-up "sign in failed" alerts, if any
+        if springboard.alerts.buttons["OK"].exists { springboard.alerts.buttons["OK"].tap() }
+        XCTAssertTrue(proTitle.exists, "Paywall should still be showing after the sheet closes")
+        XCTAssertFalse(app.staticTexts["Welcome Back"].exists, "App locked after the purchase sheet closed")
+
+        // Control Center makes the app inactive (willResignActive) without
+        // backgrounding it — the same transition a real purchase / Face ID
+        // sheet causes on device. It must NOT lock.
+        // Face ID phones: swipe down from the top-right corner (a top swipe on a
+        // Home-button phone opens the Cover Sheet, which really backgrounds the app).
+        // Home-button phones (iPhone SE): swipe up from the bottom edge.
+        func drag(_ from: CGVector, _ to: CGVector) {
+            springboard.coordinate(withNormalizedOffset: from)
+                .press(forDuration: 0.1, thenDragTo: springboard.coordinate(withNormalizedOffset: to))
+        }
+        let hasHomeButton = app.windows.firstMatch.frame.height < 700
+        if hasHomeButton {
+            drag(CGVector(dx: 0.5, dy: 0.995), CGVector(dx: 0.5, dy: 0.3))
+        } else {
+            drag(CGVector(dx: 0.95, dy: 0.005), CGVector(dx: 0.95, dy: 0.7))
+        }
+        sleep(2)
+        keep(XCUIScreen.main, "6b-control-center")
+        if hasHomeButton {
+            drag(CGVector(dx: 0.5, dy: 0.05), CGVector(dx: 0.5, dy: 0.9))
+        } else {
+            drag(CGVector(dx: 0.5, dy: 0.98), CGVector(dx: 0.5, dy: 0.3))
+        }
+        sleep(2)
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertFalse(app.staticTexts["Welcome Back"].exists, "App locked after Control Center (inactive only)")
+        XCTAssertTrue(proTitle.exists, "Paywall should still be showing after Control Center")
+
+        // Going to the background DOES lock.
+        app.buttons["Close"].tap()
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5) || app.wait(for: .runningBackgroundSuspended, timeout: 5))
+        app.activate()
+        XCTAssertTrue(app.staticTexts["Welcome Back"].waitForExistence(timeout: 10), "App did not lock after background")
+        keep(app, "7-locked-after-background")
+    }
+
+    private func keep(_ screen: XCUIScreen, _ name: String) {
+        let shot = XCTAttachment(screenshot: screen.screenshot())
+        shot.name = name
+        shot.lifetime = .keepAlways
+        add(shot)
     }
 
     // MARK: - Helpers
