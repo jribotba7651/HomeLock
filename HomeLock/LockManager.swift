@@ -929,8 +929,6 @@ class LockManager: ObservableObject {
 
     private func cleanupOrphanedTriggers() async {
         let homeKit = HomeKitService.shared
-        let isolateLutron = HomeKitService.shouldIgnoreLutron
-
         print("🧹 [LockManager] Iniciando limpieza de triggers huérfanos...")
 
         var removedCount = 0
@@ -942,13 +940,8 @@ class LockManager: ObservableObject {
             for trigger in homeLockTriggers {
                 print("🔍 [LockManager] Verificando trigger: \(trigger.name)")
 
-                // Aislamiento Lutron: no tocamos triggers Lutron, ni para borrarlos.
-                // El bridge se satura con cualquier write y eso es exactamente lo
-                // que estamos evitando.
-                if isolateLutron && homeKit.triggerReferencesLutron(trigger, in: home) {
-                    print("🚫 [LockManager] Skip trigger huérfano Lutron (aislado): \(trigger.name)")
-                    continue
-                }
+                // Lutron isolation never blocks removals; removeHomeLockTrigger spaces
+                // Lutron deletions ~1s apart.
 
                 // Orphan decision: resolve the accessory via the trigger's event chain
                 // (never via the UUID in the name, which differs per device). Orphaned
@@ -973,16 +966,6 @@ class LockManager: ObservableObject {
             // Limpiar ActionSets huérfanos que no están asociados a ningún trigger
             let homeLockActionSets = home.actionSets.filter { $0.name.hasPrefix("HomeLock_Revert_") }
             for actionSet in homeLockActionSets {
-                // Aislamiento Lutron: si el ActionSet escribe sobre una característica
-                // de un accesorio Lutron, lo dejamos en paz para no tocar el bridge.
-                if isolateLutron,
-                   let action = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
-                   let actionAccessory = action.characteristic.service?.accessory,
-                   homeKit.isLutronDevice(actionAccessory) {
-                    print("🚫 [LockManager] Skip ActionSet huérfano Lutron (aislado): \(actionSet.name)")
-                    continue
-                }
-
                 // Verificar si este ActionSet está asociado a algún trigger activo
                 let hasActiveTrigger = home.triggers.contains { trigger in
                     guard let eventTrigger = trigger as? HMEventTrigger else { return false }
@@ -991,15 +974,10 @@ class LockManager: ObservableObject {
 
                 if !hasActiveTrigger {
                     print("🚨 [LockManager] ActionSet huérfano detectado: \(actionSet.name)")
-                    try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                        home.removeActionSet(actionSet) { error in
-                            if let error {
-                                print("⚠️ [LockManager] Error eliminando ActionSet huérfano: \(error.localizedDescription)")
-                            } else {
-                                print("✅ [LockManager] ActionSet huérfano eliminado: \(actionSet.name)")
-                            }
-                            continuation.resume()
-                        }
+                    do {
+                        try await homeKit.removeHomeLockActionSet(actionSet, in: home)
+                    } catch {
+                        print("⚠️ [LockManager] Error eliminando ActionSet huérfano: \(error.localizedDescription)")
                     }
                     removedCount += 1
                 }

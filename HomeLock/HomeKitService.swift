@@ -95,8 +95,12 @@ class HomeKitService: NSObject, ObservableObject {
     /// "Not found" is treated as success (another device may have removed it);
     /// any other error is thrown.
     func removeHomeLockTrigger(_ trigger: HMTrigger, in home: HMHome) async throws {
+        // Lutron isolation blocks writes and new triggers, but removals are always
+        // allowed — just spaced ~1s apart so the Caséta bridge isn't flooded.
+        let isLutron = resolveAccessory(for: trigger).map(isLutronDevice) ?? false
         if let eventTrigger = trigger as? HMEventTrigger {
             for actionSet in eventTrigger.actionSets where actionSet.name.hasPrefix("HomeLock_") {
+                if isLutron { await spaceLutronDeletion() }
                 do {
                     try await home.removeActionSet(actionSet)
                 } catch let hmError as HMError where Self.isNotFoundError(hmError) {
@@ -106,11 +110,44 @@ class HomeKitService: NSObject, ObservableObject {
                 }
             }
         }
+        if isLutron { await spaceLutronDeletion() }
         do {
             try await home.removeTrigger(trigger)
             print("✅ [HomeLock] Trigger eliminado: \(trigger.name)")
         } catch let hmError as HMError where Self.isNotFoundError(hmError) {
             print("🔇 [HomeLock] Trigger already removed (code \(hmError.code.rawValue)): \(trigger.name)")
+        }
+    }
+
+    /// Removes a standalone HomeLock_ action set, spacing Lutron deletions.
+    func removeHomeLockActionSet(_ actionSet: HMActionSet, in home: HMHome) async throws {
+        if actionSetReferencesLutron(actionSet) { await spaceLutronDeletion() }
+        do {
+            try await home.removeActionSet(actionSet)
+            print("✅ [HomeLock] ActionSet eliminado: \(actionSet.name)")
+        } catch let hmError as HMError where Self.isNotFoundError(hmError) {
+            // Already gone
+        }
+    }
+
+    /// `true` if the action set writes to a characteristic of a Lutron accessory.
+    func actionSetReferencesLutron(_ actionSet: HMActionSet) -> Bool {
+        guard let action = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
+              let accessory = action.characteristic.service?.accessory else { return false }
+        return isLutronDevice(accessory)
+    }
+
+    /// Next time a Lutron deletion may run; consecutive deletions are spaced ~1s.
+    private var nextLutronDeletionAt: Date = .distantPast
+    static let lutronDeletionSpacing: TimeInterval = 1.0
+
+    private func spaceLutronDeletion() async {
+        let now = Date()
+        let slot = max(now, nextLutronDeletionAt)
+        nextLutronDeletionAt = slot.addingTimeInterval(Self.lutronDeletionSpacing)
+        let wait = slot.timeIntervalSince(now)
+        if wait > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
         }
     }
 
@@ -583,11 +620,7 @@ class HomeKitService: NSObject, ObservableObject {
     /// Elimina un trigger de lock por su UUID. Idempotent: if the trigger was already
     /// removed by another device, this returns silently without error.
     func removeLockTrigger(triggerID: UUID, for accessory: HMAccessory) async throws {
-        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
-            print("🚫 [HomeKit] Skip removeLockTrigger (Lutron isolated): \(accessory.name)")
-            return
-        }
-
+        // Lutron isolation never blocks removals (spacing is applied in removeHomeLockTrigger).
         guard let home = getHome(for: accessory) else {
             throw HomeKitError.homeNotFound
         }
@@ -599,143 +632,58 @@ class HomeKitService: NSObject, ObservableObject {
         }
 
         print("🧹 [HomeLock] Eliminando trigger: \(trigger.name)")
-
-        // Eliminar action sets asociados primero
-        if let eventTrigger = trigger as? HMEventTrigger {
-            for actionSet in eventTrigger.actionSets {
-                if actionSet.name.hasPrefix("HomeLock_Revert_") {
-                    print("🧹 [HomeLock] Eliminando ActionSet: \(actionSet.name)")
-                    try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                        home.removeActionSet(actionSet) { error in
-                            if let error {
-                                print("⚠️ [HomeLock] Error eliminando ActionSet: \(error.localizedDescription)")
-                            }
-                            continuation.resume()
-                        }
-                    }
-                }
-            }
-        }
-
-        // Eliminar el trigger — idempotent for concurrent removal, loud for real errors
         do {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                home.removeTrigger(trigger) { error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        print("✅ [HomeLock] Trigger eliminado para \(accessory.name)")
-                        continuation.resume()
-                    }
-                }
-            }
-        } catch let hmError as HMError where Self.isNotFoundError(hmError) {
-            // Expected: another device already removed this trigger
-            print("🔇 [HomeLock] Trigger already removed by another device (code \(hmError.code.rawValue)): \(accessory.name)")
+            try await removeHomeLockTrigger(trigger, in: home)
         } catch {
             // Unexpected: network, permissions, etc. — log visibly but don't crash
             print("⚠️ [HomeLock] WARNING: Trigger removal failed with unexpected error: \(error.localizedDescription) (code: \((error as NSError).code))")
         }
-
     }
 
-    /// Elimina un trigger de lock por nombre del accesorio (matches both old and new name format)
+    /// Elimina todos los triggers de lock de un accesorio. Matches via the event chain
+    /// (triggers created on any device) and the legacy name prefix (this device).
     func removeLockTrigger(for accessory: HMAccessory) async throws {
-        // Aislamiento Lutron: ver nota en la otra sobrecarga.
-        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
-            print("🚫 [HomeKit] Skip removeLockTrigger by-name (Lutron isolated): \(accessory.name)")
-            return
-        }
-
+        // Lutron isolation never blocks removals (spacing is applied in removeHomeLockTrigger).
         guard let home = getHome(for: accessory) else {
             throw HomeKitError.homeNotFound
         }
 
         let triggerPrefix = "HomeLock_\(accessory.uniqueIdentifier.uuidString)"
-
-        // Find all triggers for this device (old format or new format with _exp)
-        let matchingTriggers = home.triggers.filter { $0.name.hasPrefix(triggerPrefix) }
+        let matchingTriggers = home.triggers.filter { trigger in
+            guard trigger.name.hasPrefix("HomeLock_"), !trigger.name.hasPrefix("HomeLock_Revert_") else { return false }
+            if let resolved = resolveAccessory(for: trigger) {
+                return resolved.uniqueIdentifier == accessory.uniqueIdentifier
+            }
+            return trigger.name.hasPrefix(triggerPrefix)
+        }
         guard !matchingTriggers.isEmpty else { return }
 
         for trigger in matchingTriggers {
-            // Eliminar action sets asociados
-            if let eventTrigger = trigger as? HMEventTrigger {
-                for actionSet in eventTrigger.actionSets {
-                    if actionSet.name.hasPrefix("HomeLock_Revert_") {
-                        try? await home.removeActionSet(actionSet)
-                    }
-                }
-            }
-
             do {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    home.removeTrigger(trigger) { error in
-                        if let error {
-                            continuation.resume(throwing: error)
-                        } else {
-                            print("✅ [HomeLock] Trigger eliminado para \(accessory.name)")
-                            continuation.resume()
-                        }
-                    }
-                }
-            } catch let hmError as HMError where Self.isNotFoundError(hmError) {
-                print("🔇 [HomeLock] Trigger already removed by another device (code \(hmError.code.rawValue)): \(accessory.name)")
+                try await removeHomeLockTrigger(trigger, in: home)
             } catch {
                 print("⚠️ [HomeLock] WARNING: Trigger removal failed with unexpected error: \(error.localizedDescription) (code: \((error as NSError).code))")
             }
         }
-
     }
 
     /// Elimina TODAS las automatizaciones de HomeLock (triggers y action sets que empiezan con "HomeLock_")
     /// - Returns: Número de elementos eliminados (triggers + action sets)
     func removeAllHomeLockAutomations() async -> Int {
         var removedCount = 0
-        let isolateLutron = Self.shouldIgnoreLutron
 
         for home in homes {
             print("🧹 [HomeLock] Limpiando home: \(home.name)")
 
-            // 1. Eliminar todos los triggers que empiezan con "HomeLock_"
+            // 1. Eliminar todos los triggers que empiezan con "HomeLock_".
+            // Lutron triggers are removed too (isolation never blocks removals);
+            // removeHomeLockTrigger spaces Lutron deletions ~1s apart.
             let homeLockTriggers = home.triggers.filter { $0.name.hasPrefix("HomeLock_") }
             print("🧹 [HomeLock] Encontrados \(homeLockTriggers.count) triggers HomeLock_")
 
             for trigger in homeLockTriggers {
-                // Aislamiento Lutron: incluso un cleanup explícito del usuario debe
-                // saltar Lutron, porque borrar 50 triggers en ráfaga al bridge es
-                // exactamente lo que tira la conexión de toda la casa. Si el usuario
-                // quiere limpiar Lutron, primero desactiva el aislamiento.
-                if isolateLutron && triggerReferencesLutron(trigger, in: home) {
-                    print("🚫 [HomeLock] Skip trigger Lutron en cleanup (aislado): \(trigger.name)")
-                    continue
-                }
                 do {
-                    // Primero eliminar action sets asociados al trigger
-                    if let eventTrigger = trigger as? HMEventTrigger {
-                        for actionSet in eventTrigger.actionSets where actionSet.name.hasPrefix("HomeLock_") {
-                            try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                                home.removeActionSet(actionSet) { error in
-                                    if let error {
-                                        print("⚠️ [HomeLock] Error eliminando ActionSet asociado: \(error.localizedDescription)")
-                                    }
-                                    continuation.resume()
-                                }
-                            }
-                        }
-                    }
-
-                    // Eliminar el trigger
-                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                        home.removeTrigger(trigger) { error in
-                            if let error {
-                                print("❌ [HomeLock] Error eliminando trigger \(trigger.name): \(error.localizedDescription)")
-                                continuation.resume(throwing: error)
-                            } else {
-                                print("✅ [HomeLock] Trigger eliminado: \(trigger.name)")
-                                continuation.resume()
-                            }
-                        }
-                    }
+                    try await removeHomeLockTrigger(trigger, in: home)
                     removedCount += 1
                 } catch {
                     print("⚠️ [HomeLock] No se pudo eliminar trigger: \(error.localizedDescription)")
@@ -747,25 +695,8 @@ class HomeKitService: NSObject, ObservableObject {
             print("🧹 [HomeLock] Encontrados \(homeLockActionSets.count) ActionSets HomeLock_")
 
             for actionSet in homeLockActionSets {
-                if isolateLutron,
-                   let action = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
-                   let actionAccessory = action.characteristic.service?.accessory,
-                   isLutronDevice(actionAccessory) {
-                    print("🚫 [HomeLock] Skip ActionSet Lutron en cleanup (aislado): \(actionSet.name)")
-                    continue
-                }
                 do {
-                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                        home.removeActionSet(actionSet) { error in
-                            if let error {
-                                print("❌ [HomeLock] Error eliminando ActionSet \(actionSet.name): \(error.localizedDescription)")
-                                continuation.resume(throwing: error)
-                            } else {
-                                print("✅ [HomeLock] ActionSet eliminado: \(actionSet.name)")
-                                continuation.resume()
-                            }
-                        }
-                    }
+                    try await removeHomeLockActionSet(actionSet, in: home)
                     removedCount += 1
                 } catch {
                     print("⚠️ [HomeLock] No se pudo eliminar ActionSet: \(error.localizedDescription)")
