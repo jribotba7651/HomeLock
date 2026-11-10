@@ -379,20 +379,23 @@ class HomeKitService: NSObject, ObservableObject {
         case .timeOfDay:
             // A daily window cannot describe 24 h or more.
             guard end.timeIntervalSince(start) < 24 * 3600 else { return nil }
-            // Open the window one minute before the lock starts so the current minute is always inside it.
-            let open = calendar.dateComponents([.hour, .minute], from: start.addingTimeInterval(-60))
+            // Hour/minute only, built explicitly (no calendar/timeZone fields).
+            // The window opens one minute before the lock starts so the current
+            // minute is always inside it.
+            let openFull = calendar.dateComponents([.hour, .minute], from: start.addingTimeInterval(-60))
             let closeFull = lockEndComponents(for: end, calendar: calendar)
+            let open = DateComponents(hour: openFull.hour, minute: openFull.minute)
             let close = DateComponents(hour: closeFull.hour, minute: closeFull.minute)
+            let after = HMEventTrigger.predicateForEvaluatingTrigger(occurringAfter: open)
+            let before = HMEventTrigger.predicateForEvaluatingTrigger(occurringBefore: close)
             let openMinutes = open.hour! * 60 + open.minute!
             let closeMinutes = close.hour! * 60 + close.minute!
             if closeMinutes > openMinutes {
-                return HMEventTrigger.predicateForEvaluatingTriggerOccurringBetweenDate(with: open, secondDateWith: close)
+                return NSCompoundPredicate(andPredicateWithSubpredicates: [after, before])
             }
             // Crosses midnight: after the opening time OR before the closing time.
-            return NSCompoundPredicate(orPredicateWithSubpredicates: [
-                HMEventTrigger.predicateForEvaluatingTrigger(occurringAfter: open),
-                HMEventTrigger.predicateForEvaluatingTrigger(occurringBefore: close),
-            ])
+            // createLockTrigger falls back to no condition if HomeKit rejects it.
+            return NSCompoundPredicate(orPredicateWithSubpredicates: [after, before])
         }
     }
 
@@ -535,9 +538,17 @@ class HomeKitService: NSObject, ObservableObject {
         // Optional hub-side end condition (see LockEndMode). Indefinite locks
         // (expiresAt == nil) never get one.
         let mode = Self.lockEndMode
-        let endPredicate = Self.lockEndPredicate(start: Date(), end: expiresAt, mode: mode)
+        var endPredicate = Self.lockEndPredicate(start: Date(), end: expiresAt, mode: mode)
         print("🔒 [HomeLock] Lock end mode: \(mode.rawValue), predicate: \(endPredicate?.predicateFormat ?? "none")")
-        let trigger = HMEventTrigger(name: triggerName, events: [event], predicate: endPredicate)
+        let trigger: HMEventTrigger
+        do {
+            trigger = try Self.makeLockTrigger(name: triggerName, events: [event], predicate: endPredicate)
+        } catch HomeKitError.predicateRejected(let reason) where (endPredicate as? NSCompoundPredicate)?.compoundPredicateType == .or {
+            // Overnight window not accepted by this HomeKit: keep the lock, end it from the app.
+            print("⚠️ [HomeLock] Overnight end condition rejected (\(reason)); falling back to no end condition")
+            endPredicate = nil
+            trigger = try Self.makeLockTrigger(name: triggerName, events: [event], predicate: nil)
+        }
 
         // Agregar trigger al home
         print("🔒 [HomeLock] Agregando trigger al home...")
@@ -639,6 +650,23 @@ class HomeKitService: NSObject, ObservableObject {
 
 
     /// Crea un ActionSet que revierte el estado del dispositivo
+    /// Creates the HMEventTrigger. HomeKit validates the predicate by raising an
+    /// Objective-C exception (NSInvalidArgumentException "Invalid parameter"),
+    /// which would crash the app; it is turned into a thrown error instead.
+    nonisolated static func makeLockTrigger(name: String, events: [HMEvent], predicate: NSPredicate?) throws -> HMEventTrigger {
+        var trigger: HMEventTrigger?
+        do {
+            try ObjCException.catching {
+                trigger = HMEventTrigger(name: name, events: events, predicate: predicate)
+            }
+        } catch {
+            print("❌ [HomeLock] HomeKit rejected the trigger (predicate: \(predicate?.predicateFormat ?? "none")): \(error.localizedDescription)")
+            throw HomeKitError.predicateRejected(error.localizedDescription)
+        }
+        guard let trigger else { throw HomeKitError.triggerCreationFailed }
+        return trigger
+    }
+
     /// Re-reads the trigger from home.triggers and checks it is enabled, has
     /// exactly one characteristic event and one action set with one write.
     func verifySavedLockTrigger(_ id: UUID, in home: HMHome, expectedPredicate: Bool) throws {
@@ -1083,6 +1111,7 @@ enum HomeKitError: LocalizedError {
     case triggerCreationFailed
     case triggerLimitReached
     case triggerVerificationFailed(String)
+    case predicateRejected(String)
     case unknown
 
     var errorDescription: String? {
@@ -1099,6 +1128,8 @@ enum HomeKitError: LocalizedError {
             return "HomeLock has reached the maximum of \(HomeKitService.maxHomeLockTriggers) active locks in this home. Unlock a device before locking another."
         case .triggerVerificationFailed(let reason):
             return "The lock was not saved correctly in HomeKit: \(reason)."
+        case .predicateRejected(let reason):
+            return "HomeKit rejected this lock's end condition (\(reason)). Choose \"No end condition\" in Lock Diagnostics."
         case .unknown:
             return "Error desconocido en HomeKit"
         }

@@ -23,7 +23,10 @@ class NotificationManager: ObservableObject {
         let releaseAction = UNNotificationAction(
             identifier: "RELEASE_LOCK",
             title: String(localized: "Release Lock"),
-            options: []  // No .foreground — allows background execution without opening app
+            // HomeKit can't be used while the app is in the background, so a
+            // background action did nothing until the app was opened. Open the
+            // app and release right away.
+            options: [.foreground]
         )
 
         let keepAction = UNNotificationAction(

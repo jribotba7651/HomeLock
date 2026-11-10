@@ -138,6 +138,8 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
             switch response.actionIdentifier {
             case "RELEASE_LOCK":
                 print("📱 [NotificationDelegate] User chose to release lock for accessory \(accessoryID)")
+                // On a cold launch from the notification, HomeKit homes load asynchronously.
+                await HomeKitService.shared.waitServiceReady()
                 await LockManager.shared.removeLock(for: accessoryID)
 
             case "KEEP_LOCKED":
@@ -147,6 +149,7 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
             case UNNotificationDefaultActionIdentifier:
                 // User tapped the notification (not a button)
                 print("📱 [NotificationDelegate] User tapped notification for accessory \(accessoryID)")
+                await HomeKitService.shared.waitServiceReady()
                 await LockManager.shared.removeLock(for: accessoryID)
 
             default:

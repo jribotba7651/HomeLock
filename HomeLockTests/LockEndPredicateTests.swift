@@ -60,8 +60,9 @@ struct LockEndPredicateTests {
 
     @Test func timeOfDaySameDayIsASingleWindow() throws {
         let p = try #require(HomeKitService.lockEndPredicate(start: date(2026, 11, 10, 21, 0), end: date(2026, 11, 10, 22, 30), mode: .timeOfDay, calendar: calendar))
-        // HomeKit's own "between" predicate is an AND of after/before.
-        if let compound = p as? NSCompoundPredicate { #expect(compound.compoundPredicateType == .and) }
+        let compound = try #require(p as? NSCompoundPredicate)
+        #expect(compound.compoundPredicateType == .and)
+        #expect(compound.subpredicates.count == 2)
         #expect(!p.predicateFormat.contains("year"))
         print("PREDICATE same-day: \(p.predicateFormat)")
     }
@@ -77,6 +78,49 @@ struct LockEndPredicateTests {
     @Test func timeOfDayFallsBackForLocksOf24HoursOrMore() {
         let p = HomeKitService.lockEndPredicate(start: date(2026, 11, 10, 21, 0), end: date(2026, 11, 11, 21, 0), mode: .timeOfDay, calendar: calendar)
         #expect(p == nil)
+    }
+
+    // MARK: - Build 6 crash: HomeKit rejects a predicate by raising an ObjC exception
+
+    @Test func objCExceptionBecomesAnError() {
+        #expect(throws: (any Error).self) {
+            try ObjCException.catching {
+                NSException(name: .invalidArgumentException, reason: "Invalid parameter").raise()
+            }
+        }
+        #expect(throws: Never.self) { try ObjCException.catching { } }
+    }
+
+    private var probeEvent: HMEvent {
+        HMPresenceEvent(presenceEventType: .everyEntry, presenceUserType: .currentUser)
+    }
+
+    @Test func rejectedPredicateThrowsInsteadOfCrashing() {
+        // HomeKit raises "Invalid parameter" for a full-date condition on current iOS.
+        let fullDate = HMEventTrigger.predicateForEvaluatingTrigger(occurringBefore: DateComponents(year: 2026, month: 11, day: 10, hour: 23, minute: 0))
+        do {
+            _ = try HomeKitService.makeLockTrigger(name: "test", events: [probeEvent], predicate: fullDate)
+            // Accepted on this iOS version: still fine, the point is that it didn't crash.
+        } catch HomeKitError.predicateRejected {
+            // Rejected: surfaced as an error.
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test(arguments: [(9, 0, 9, 10), (21, 0, 22, 30), (23, 30, 0, 15), (23, 59, 0, 1), (0, 0, 7, 0), (12, 0, 11, 59)])
+    func everyTimeOfDayPredicateIsAcceptedByHomeKit(_ window: (Int, Int, Int, Int)) throws {
+        let start = date(2026, 11, 10, window.0, window.1)
+        var end = date(2026, 11, 10, window.2, window.3)
+        if end <= start { end = calendar.date(byAdding: .day, value: 1, to: end)! }
+        let p = try #require(HomeKitService.lockEndPredicate(start: start, end: end, mode: .timeOfDay, calendar: calendar))
+        let trigger = try HomeKitService.makeLockTrigger(name: "test", events: [probeEvent], predicate: p)
+        #expect(trigger.predicate != nil)
+    }
+
+    @Test func noConditionIsAlwaysAccepted() throws {
+        let trigger = try HomeKitService.makeLockTrigger(name: "test", events: [probeEvent], predicate: nil)
+        #expect(trigger.predicate == nil)
     }
 
     @Test func defaultModeIsAppOnly() {
