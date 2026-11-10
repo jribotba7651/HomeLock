@@ -110,4 +110,14 @@ class StoreManager: ObservableObject {
             print("❌ [StoreKit] Transaction unverified: \(transaction.productID), error: \(error)")
         }
     }
+
+#if DEBUG
+    /// DEBUG-only: fuerza `isPro` para testing en device personal sin comprar
+    /// ni configurar sandbox. Envuelto en `#if DEBUG` para que el código NO
+    /// se compile en builds de Release — no puede shippear a App Store.
+    func debug_setProOverride(_ enabled: Bool) {
+        isPro = enabled
+        print("🧪 [StoreKit DEBUG] isPro override = \(enabled)")
+    }
+#endif
 }

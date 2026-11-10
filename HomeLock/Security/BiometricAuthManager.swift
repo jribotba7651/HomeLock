@@ -67,7 +67,33 @@ class BiometricAuthManager: ObservableObject {
 
         do {
             let success = try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
-            return .success(success)
+            guard success else {
+                return .failure(.authenticationFailed)
+            }
+
+            // Detecta si alguien añadió/borró huellas o caras en el device
+            // después del setup. El hash solo es válido tras `evaluatePolicy`
+            // en el mismo LAContext.
+            let current = Self.currentBiometryStateHash(from: context)
+            let saved = KeychainManager.shared.loadBiometricDomainState()
+
+            if let saved, let current {
+                if saved.version != current.version {
+                    // Formato cambió (update iOS 17→18). No es manipulación —
+                    // re-capturamos y seguimos.
+                    _ = KeychainManager.shared.saveBiometricDomainState(
+                        current.state, version: current.version)
+                } else if saved.state != current.state {
+                    return .failure(.biometricDatabaseChanged)
+                }
+            } else if saved == nil, let current {
+                // Build anterior no guardaba snapshot. Capturamos ahora para
+                // no bloquear a usuarios existentes.
+                _ = KeychainManager.shared.saveBiometricDomainState(
+                    current.state, version: current.version)
+            }
+
+            return .success(true)
         } catch let error as LAError {
             switch error.code {
             case .userCancel:
@@ -93,10 +119,33 @@ class BiometricAuthManager: ObservableObject {
     func setBiometricEnabled(_ enabled: Bool) {
         isBiometricEnabled = enabled
         _ = KeychainManager.shared.setBiometricEnabled(enabled)
+        if !enabled {
+            // Snapshot fresco la próxima vez que activen biometría.
+            _ = KeychainManager.shared.deleteBiometricDomainState()
+        }
     }
 
     private func loadBiometricSettings() {
         isBiometricEnabled = KeychainManager.shared.isBiometricEnabled()
+    }
+
+    // MARK: - Biometry State Snapshot
+
+    /// Hash opaco del estado actual de la base biométrica del device. Cambia
+    /// si se añade/elimina una huella o cara. Apple deprecó la API vieja en
+    /// iOS 18, así que elegimos en runtime y guardamos el formato con un
+    /// byte de versión (1 = API vieja, 2 = API nueva).
+    ///
+    /// Debe llamarse **después** de un `evaluatePolicy` exitoso en el mismo
+    /// `LAContext` — antes no está poblado.
+    private static func currentBiometryStateHash(from context: LAContext) -> (version: UInt8, state: Data)? {
+        if #available(iOS 18.0, macOS 15.0, *) {
+            guard let hash = context.domainState.biometry.stateHash else { return nil }
+            return (2, hash)
+        } else {
+            guard let state = context.evaluatedPolicyDomainState else { return nil }
+            return (1, state)
+        }
     }
 
     // MARK: - Enrollment Check
@@ -112,6 +161,12 @@ class BiometricAuthManager: ObservableObject {
         do {
             let success = try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
             if success {
+                // Snapshot de la base biométrica actual para detectar cambios
+                // futuros (niño añade su cara al device → forzamos PIN).
+                if let snapshot = Self.currentBiometryStateHash(from: context) {
+                    _ = KeychainManager.shared.saveBiometricDomainState(
+                        snapshot.state, version: snapshot.version)
+                }
                 setBiometricEnabled(true)
                 return .success(true)
             } else {
@@ -141,6 +196,7 @@ enum AuthenticationError: LocalizedError {
     case biometricNotEnabled
     case biometricNotEnrolled
     case biometricLockout
+    case biometricDatabaseChanged
     case userCanceled
     case userFallback
     case authenticationFailed
@@ -159,6 +215,8 @@ enum AuthenticationError: LocalizedError {
             return "No biometric data is enrolled. Please set up biometric authentication in device settings."
         case .biometricLockout:
             return "Biometric authentication is locked. Please use your passcode."
+        case .biometricDatabaseChanged:
+            return "Biometric data has changed since setup. Please enter your PIN to continue."
         case .userCanceled:
             return "Authentication was canceled by user."
         case .userFallback:

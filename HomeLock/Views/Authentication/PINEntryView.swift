@@ -20,14 +20,33 @@ struct PINEntryView: View {
     @State private var remainingTime: Int = 0
     @State private var lockoutTimer: Timer?
 
+    enum Mode {
+        /// Verifica contra el PIN guardado (app lock, unlock early).
+        case authenticate(onSuccess: () -> Void)
+        /// Captura 6 dígitos y los entrega crudos — para flujos como cambio
+        /// de PIN donde hay que recoger el nuevo PIN sin verificarlo.
+        case capture(onCaptured: (String) -> Void)
+    }
+
     let title: String
     let subtitle: String
-    let onSuccess: () -> Void
+    let mode: Mode
 
     init(title: String = "Enter PIN", subtitle: String = "Enter your 6-digit PIN", onSuccess: @escaping () -> Void) {
         self.title = title
         self.subtitle = subtitle
-        self.onSuccess = onSuccess
+        self.mode = .authenticate(onSuccess: onSuccess)
+    }
+
+    init(title: String, subtitle: String, onCaptured: @escaping (String) -> Void) {
+        self.title = title
+        self.subtitle = subtitle
+        self.mode = .capture(onCaptured: onCaptured)
+    }
+
+    private var isAuthenticateMode: Bool {
+        if case .authenticate = mode { return true }
+        return false
     }
 
     var body: some View {
@@ -65,7 +84,7 @@ struct PINEntryView: View {
 
                 // Error Message or Lockout Timer
                 VStack {
-                    if authManager.isLockedOut {
+                    if isAuthenticateMode && authManager.isLockedOut {
                         lockoutView
                     } else if showingError {
                         errorView
@@ -82,13 +101,16 @@ struct PINEntryView: View {
 
                 // Number Pad
                 numberPad
-                    .disabled(authManager.isLockedOut || isAuthenticating)
-                    .opacity(authManager.isLockedOut ? 0.5 : 1.0)
+                    .disabled((isAuthenticateMode && authManager.isLockedOut) || isAuthenticating)
+                    .opacity(isAuthenticateMode && authManager.isLockedOut ? 0.5 : 1.0)
 
                 Spacer()
 
-                // Biometric Authentication Button
-                if biometricManager.isBiometricEnabled && biometricManager.isBiometricAvailable && !authManager.isLockedOut {
+                // Biometric Authentication Button (solo en authenticate mode)
+                if isAuthenticateMode
+                    && biometricManager.isBiometricEnabled
+                    && biometricManager.isBiometricAvailable
+                    && !authManager.isLockedOut {
                     biometricButton
                         .padding(.horizontal, 32)
                         .padding(.bottom, 32)
@@ -221,7 +243,15 @@ struct PINEntryView: View {
         pin.append(digit)
 
         if pin.count == 6 {
-            authenticateWithPIN()
+            switch mode {
+            case .authenticate:
+                authenticateWithPIN()
+            case .capture(let onCaptured):
+                let captured = pin
+                pin = ""
+                showingError = false
+                onCaptured(captured)
+            }
         }
     }
 
@@ -233,6 +263,7 @@ struct PINEntryView: View {
     }
 
     private func authenticateWithPIN() {
+        guard case .authenticate(let onSuccess) = mode else { return }
         isAuthenticating = true
         showingError = false
 
@@ -252,6 +283,7 @@ struct PINEntryView: View {
     }
 
     private func authenticateWithBiometrics() {
+        guard case .authenticate(let onSuccess) = mode else { return }
         isAuthenticating = true
         showingError = false
 

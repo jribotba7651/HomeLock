@@ -57,6 +57,51 @@ struct PINSetupView: View {
                         .scaleEffect(index < currentPIN.count ? 1.2 : 1.0)
                         .animation(.easeInOut(duration: 0.2), value: currentPIN.count)
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 40)
+
+                // Error Message
+                VStack {
+                    if showingError {
+                        HStack {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .foregroundColor(.red)
+                            Text(errorMessage)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.red.opacity(0.1))
+                        .clipShape(Capsule())
+                    } else {
+                        Text("")
+                            .font(.caption)
+                            .frame(height: 20)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 32)
+                .padding(.bottom, 20)
+
+                Spacer()
+
+                // Number Pad
+                numberPad
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 32)
+
+                Spacer()
+
+                // Back button (only on confirm step)
+                if currentStep == .confirm {
+                    Button("Back") {
+                        goBack()
+                    }
+                    .font(.body)
+                    .foregroundColor(.orange)
+                    .padding(.bottom, 32)
+                }
             }
             .padding(.bottom, 40)
 

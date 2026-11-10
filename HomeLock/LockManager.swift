@@ -20,6 +20,10 @@ struct LockConfiguration: Codable, Identifiable {
     let lockedState: Bool
     let createdAt: Date
     let expiresAt: Date? // nil = indefinido
+    /// When set, identifies the family member who created this lock from another
+    /// device. Nil for locks created locally. Used to attribute unlock
+    /// notifications. Optional so old persisted configs decode without migration.
+    var lockedByName: String?
 
     var isExpired: Bool {
         guard let expiresAt else { return false }
@@ -61,10 +65,10 @@ class LockManager: ObservableObject {
     private var modelContext: ModelContext?
     private var homeKitCancellable: AnyCancellable?
     private var syncTimer: Timer?
-    private let syncInterval: TimeInterval = 30.0 // Sync every 30 seconds (increased from 10)
+    private let syncInterval: TimeInterval = 8.0 // Sync every 8s for snappy cross-device updates
 
     // Background Task Management
-    nonisolated static let backgroundTaskIdentifier = "com.jibaroenaluna.homelock.expireLock"
+    nonisolated static let backgroundTaskIdentifier = "com.jibaroenlaluna.homelock.expireLock"
 
     // MARK: - Polling (Fallback for HMEventTrigger)
     private var pollingTimer: Timer?
@@ -308,7 +312,8 @@ class LockManager: ObservableObject {
                 // Notificar al usuario
                 await NotificationManager.shared.showExternalLockNotification(
                     accessoryName: detected.accessoryName,
-                    isLocked: true
+                    isLocked: true,
+                    userName: nil
                 )
 
                 logEvent(.locked, accessoryUUID: accessoryID, accessoryName: detected.accessoryName, notes: "Locked by another home member")
@@ -337,7 +342,8 @@ class LockManager: ObservableObject {
 
                     await NotificationManager.shared.showExternalLockNotification(
                         accessoryName: config.accessoryName,
-                        isLocked: false
+                        isLocked: false,
+                        userName: config.lockedByName
                     )
 
                     logEvent(.unlocked, accessoryUUID: accessoryID, accessoryName: config.accessoryName, notes: "Unlocked by another home member")

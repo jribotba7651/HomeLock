@@ -121,7 +121,38 @@ class HomeKitService: NSObject, ObservableObject {
     /// secundario para que la UI pueda mostrar un aviso.
     private func filterOutlets(from accessories: [HMAccessory]) -> [HMAccessory] {
         var hiddenLutron = 0
+
+        // Categories that expose a PowerState characteristic but don't behave
+        // like switchable outlets (writing fails or has unintended effects).
+        // Excluding them up-front prevents the user from picking a camera or
+        // doorbell only to hit a "Read/Write operation failed" error.
+        let unsupportedCategories: Set<String> = [
+            HMAccessoryCategoryTypeIPCamera,
+            HMAccessoryCategoryTypeVideoDoorbell,
+            HMAccessoryCategoryTypeAirPurifier,
+            HMAccessoryCategoryTypeThermostat,
+            HMAccessoryCategoryTypeSensor,
+            HMAccessoryCategoryTypeDoorLock,
+            HMAccessoryCategoryTypeGarageDoorOpener,
+            HMAccessoryCategoryTypeWindowCovering,
+            HMAccessoryCategoryTypeWindow,
+            HMAccessoryCategoryTypeDoor,
+            HMAccessoryCategoryTypeAirConditioner,
+            HMAccessoryCategoryTypeAirHeater,
+            HMAccessoryCategoryTypeAirHumidifier,
+            HMAccessoryCategoryTypeAirDehumidifier,
+            HMAccessoryCategoryTypeShowerHead,
+            HMAccessoryCategoryTypeFaucet,
+            HMAccessoryCategoryTypeSprinkler,
+        ]
+
         let filtered = accessories.filter { accessory in
+            // Skip categories we know don't behave like switchable outlets.
+            if unsupportedCategories.contains(accessory.category.categoryType) {
+                return false
+            }
+
+            // Primero: ¿es controlable? Si no, fuera siempre.
             let isControllable = accessory.services.contains { service in
                 service.characteristics.contains { $0.characteristicType == HMCharacteristicTypePowerState }
             }
@@ -850,6 +881,7 @@ class HomeKitService: NSObject, ObservableObject {
             let homeLockTriggers = home.triggers.filter {
                 $0.name.hasPrefix("HomeLock_") && !$0.name.hasPrefix("HomeLock_Revert_") && $0.isEnabled
             }
+            print("🔍 [HomeKit Sync] Home '\(home.name)': \(homeLockTriggers.count) HomeLock triggers, \(home.accessories.count) accessories")
 
             for trigger in homeLockTriggers {
                 guard let eventTrigger = trigger as? HMEventTrigger else {

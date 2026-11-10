@@ -235,11 +235,8 @@ struct ChangePINView: View {
     @ObservedObject var authManager = AuthenticationManager.shared
 
     @State private var currentStep: ChangeStep = .current
-    @State private var currentPIN: String = ""
     @State private var newPIN: String = ""
-    @State private var confirmPIN: String = ""
-    @State private var showingError: Bool = false
-    @State private var errorMessage: String = ""
+    @State private var banner: Banner?
 
     @Environment(\.presentationMode) var presentationMode
 
@@ -249,10 +246,15 @@ struct ChangePINView: View {
         case confirm
     }
 
+    private struct Banner: Identifiable {
+        let id = UUID()
+        let message: String
+        let isError: Bool
+    }
+
     var body: some View {
         NavigationView {
             VStack {
-                // Progress indicator
                 HStack(spacing: 8) {
                     ForEach(0..<3) { index in
                         Circle()
@@ -262,15 +264,29 @@ struct ChangePINView: View {
                 }
                 .padding(.top, 20)
 
+                if let banner {
+                    HStack(spacing: 8) {
+                        Image(systemName: banner.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                        Text(banner.message)
+                            .font(.caption)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .foregroundColor(banner.isError ? .red : .green)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background((banner.isError ? Color.red : Color.green).opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                }
+
                 Spacer()
 
-                // PIN Entry based on current step
-                PINEntryView(
-                    title: stepTitle,
-                    subtitle: stepSubtitle
-                ) {
-                    handleStepCompletion()
-                }
+                // Step 1 verifica contra el PIN actual vía AuthenticationManager
+                // (authenticate mode, reusa lockout existente). Steps 2 y 3
+                // sólo capturan dígitos (capture mode) — sin lockout ni biometry.
+                pinView(for: currentStep)
+                    .id(currentStep) // fuerza reset del @State interno al cambiar step
 
                 Spacer()
             }
@@ -295,42 +311,43 @@ struct ChangePINView: View {
         }
     }
 
-    // MARK: - Computed Properties
-
-    private var stepTitle: String {
-        switch currentStep {
+    @ViewBuilder
+    private func pinView(for step: ChangeStep) -> some View {
+        switch step {
         case .current:
-            return "Current PIN"
+            PINEntryView(title: "Current PIN", subtitle: "Enter your current PIN") {
+                // authManager.authenticateWithPIN ya corrió dentro — si
+                // llegamos aquí es porque fue correcto. Avanzamos a .new.
+                banner = nil
+                currentStep = .new
+            }
         case .new:
-            return "New PIN"
+            PINEntryView(title: "New PIN", subtitle: "Enter your new 6-digit PIN") { captured in
+                newPIN = captured
+                banner = nil
+                currentStep = .confirm
+            }
         case .confirm:
-            return "Confirm New PIN"
+            PINEntryView(title: "Confirm New PIN", subtitle: "Re-enter your new PIN") { captured in
+                commitPINChange(confirmation: captured)
+            }
         }
     }
 
-    private var stepSubtitle: String {
-        switch currentStep {
-        case .current:
-            return "Enter your current PIN"
-        case .new:
-            return "Enter your new 6-digit PIN"
-        case .confirm:
-            return "Confirm your new PIN"
-        }
-    }
-
-    // MARK: - Actions
-
-    private func handleStepCompletion() {
-        switch currentStep {
-        case .current:
+    private func commitPINChange(confirmation: String) {
+        let result = authManager.changePIN(newPin: newPIN, confirmation: confirmation)
+        switch result {
+        case .success:
+            banner = Banner(message: "PIN updated", isError: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                presentationMode.wrappedValue.dismiss()
+            }
+        case .failure(let error):
+            banner = Banner(message: error.localizedDescription, isError: true)
+            // Vuelve al step .new para que el usuario re-ingrese sin arrastrar
+            // el confirm fallido.
+            newPIN = ""
             currentStep = .new
-        case .new:
-            currentStep = .confirm
-        case .confirm:
-            // Implement PIN change logic here
-            // For now, just dismiss
-            presentationMode.wrappedValue.dismiss()
         }
     }
 
@@ -343,6 +360,7 @@ struct ChangePINView: View {
         case .current:
             break
         }
+        banner = nil
     }
 }
 

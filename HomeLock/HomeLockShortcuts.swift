@@ -79,20 +79,33 @@ struct LockDeviceIntent: AppIntent {
 struct UnlockDeviceIntent: AppIntent {
     static var title: LocalizedStringResource = "Unlock Device"
     static var description = IntentDescription("Remove lock from a smart home device")
-    
+
     @Parameter(title: "Device")
     var device: HomeLockDeviceEntity
-    
+
     static var parameterSummary: some ParameterSummary {
         Summary("Unlock \(\.$device)")
     }
-    
+
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let accessoryID = UUID(uuidString: device.id) else {
              throw IntentError.invalidDevice
         }
-        
+
+        // PROTECCIÓN CRÍTICA: desbloquear es la acción sensible del app de
+        // control parental. Antes de tocar nada exigimos Face ID / Touch ID
+        // (con passcode del device como fallback) porque un `AppIntent` de
+        // Siri o Shortcuts NO pasa por la PINEntryView de HomeLock — sin
+        // este check, cualquier niño con "Hey Siri, unlock X" podría romper
+        // el lock.
+        let ok = await AuthenticationManager.shared.requireDeviceAuthForIntent(
+            reason: "Authenticate to unlock \(device.name)"
+        )
+        guard ok else {
+            throw IntentError.authenticationRequired
+        }
+
         await LockManager.shared.removeLock(for: accessoryID)
         return .result(dialog: "Unlocked \(device.name)")
     }
@@ -162,13 +175,16 @@ struct HomeLockShortcuts: AppShortcutsProvider {
 enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
     case lockFailed(String)
     case invalidDevice
-    
+    case authenticationRequired
+
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .lockFailed(let name):
             return "Failed to lock \(name)"
         case .invalidDevice:
             return "Invalid device selected"
+        case .authenticationRequired:
+            return "Authentication required to unlock"
         }
     }
 }

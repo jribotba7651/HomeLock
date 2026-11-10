@@ -4,6 +4,8 @@
 <dict>
 	<key>UIRequiresFullScreen</key>
 	<true/>
+	<key>CKSharingSupported</key>
+	<true/>
 	<key>NSHomeKitUsageDescription</key>
 	<string>HomeLock necesita acceso a HomeKit para controlar tus enchufes inteligentes y aplicar límites de tiempo.</string>
 	<key>NSFaceIDUsageDescription</key>
@@ -17,7 +19,7 @@
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.jibaroenaluna.homelock.expireLock</string>
+		<string>com.jibaroenlaluna.homelock.expireLock</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
