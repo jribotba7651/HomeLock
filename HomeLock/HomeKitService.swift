@@ -71,6 +71,49 @@ class HomeKitService: NSObject, ObservableObject {
         return isLutronDevice(accessory)
     }
 
+    /// Resolves the accessory a HomeLock trigger acts on through its event chain
+    /// (event -> characteristic -> service -> accessory). Returns nil when the
+    /// chain is broken. Never use the UUID in the trigger name for this: it is the
+    /// creating device's `uniqueIdentifier`, which differs on every device.
+    func resolveAccessory(for trigger: HMTrigger) -> HMAccessory? {
+        guard let eventTrigger = trigger as? HMEventTrigger,
+              let charEvent = eventTrigger.events.first as? HMCharacteristicEvent<NSCopying> else {
+            return nil
+        }
+        return charEvent.characteristic.service?.accessory
+    }
+
+    /// Pure orphan decision for a HomeLock_ trigger: orphaned only if its event
+    /// chain no longer resolves to an accessory, or its `_exp` timestamp has passed.
+    nonisolated static func isOrphanedTrigger(chainResolved: Bool, expiresAt: Date?, now: Date = Date()) -> Bool {
+        if !chainResolved { return true }
+        if let expiresAt, now >= expiresAt { return true }
+        return false
+    }
+
+    /// Removes one HomeLock_ trigger and its HomeLock_ action sets.
+    /// "Not found" is treated as success (another device may have removed it);
+    /// any other error is thrown.
+    func removeHomeLockTrigger(_ trigger: HMTrigger, in home: HMHome) async throws {
+        if let eventTrigger = trigger as? HMEventTrigger {
+            for actionSet in eventTrigger.actionSets where actionSet.name.hasPrefix("HomeLock_") {
+                do {
+                    try await home.removeActionSet(actionSet)
+                } catch let hmError as HMError where Self.isNotFoundError(hmError) {
+                    // Already gone
+                } catch {
+                    print("⚠️ [HomeLock] Error eliminando ActionSet \(actionSet.name): \(error.localizedDescription)")
+                }
+            }
+        }
+        do {
+            try await home.removeTrigger(trigger)
+            print("✅ [HomeLock] Trigger eliminado: \(trigger.name)")
+        } catch let hmError as HMError where Self.isNotFoundError(hmError) {
+            print("🔇 [HomeLock] Trigger already removed (code \(hmError.code.rawValue)): \(trigger.name)")
+        }
+    }
+
     /// Detecta si un accesorio es de la marca TP-Link/Kasa
     func isKasaDevice(_ accessory: HMAccessory) -> Bool {
         let manufacturer = accessory.manufacturer?.lowercased() ?? ""

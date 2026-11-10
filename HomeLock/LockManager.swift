@@ -152,10 +152,10 @@ class LockManager: ObservableObject {
         }
         isConfigured = true
 
-        // Verificar locks expirados y triggers huérfanos al iniciar
+        // Verificar locks expirados al iniciar. Orphan cleanup runs only after
+        // a successful sync (see below).
         Task { [weak self] in
             await self?.checkExpiredLocks()
-            await self?.cleanupOrphanedTriggers()
         }
 
         // Iniciar polling si hay locks activos
@@ -180,9 +180,12 @@ class LockManager: ObservableObject {
         // Iniciar sincronización periódica
         startSyncTimer()
 
-        // Sincronizar inmediatamente
+        // Sincronizar inmediatamente; limpiar triggers huérfanos solo si la sync tuvo éxito
         Task { [weak self] in
-            await self?.syncFromHomeKit()
+            guard let self else { return }
+            if await self.syncFromHomeKit() {
+                await self.cleanupOrphanedTriggers()
+            }
         }
     }
 
@@ -201,10 +204,12 @@ class LockManager: ObservableObject {
     /// Sincroniza el estado local con los triggers de HomeKit.
     /// HomeKit triggers are the SOURCE OF TRUTH for active locks.
     /// UserDefaults is just a local cache for fast UI on cold launch.
-    func syncFromHomeKit() async {
+    /// - Returns: true if the sync ran to completion.
+    @discardableResult
+    func syncFromHomeKit() async -> Bool {
         guard !isSyncing else {
             print("⏭️ [LockManager Sync] Ya hay una sincronización en progreso")
-            return
+            return false
         }
 
         let homeKit = HomeKitService.shared
@@ -366,6 +371,7 @@ class LockManager: ObservableObject {
         stopPollingIfNeeded()
 
         print("🔄 [LockManager Sync] Sincronización completada. Locks activos: \(locks.count)")
+        return true
     }
 
     /// Configura el ModelContext para el logging de eventos
@@ -905,63 +911,23 @@ class LockManager: ObservableObject {
                     continue
                 }
 
-                // Check if trigger is expired per its name timestamp
-                if let parsed = HomeKitService.parseTriggerName(trigger.name),
-                   let expiresAt = parsed.expiresAt,
-                   Date() >= expiresAt {
-                    print("⏰ [LockManager] Trigger expired per name: \(trigger.name)")
-                    // Fall through to removal below
-                }
+                // Orphan decision: resolve the accessory via the trigger's event chain
+                // (never via the UUID in the name, which differs per device). Orphaned
+                // only if the chain is broken or the _exp timestamp has passed.
+                let chainResolved = homeKit.resolveAccessory(for: trigger) != nil
+                let expiresAt = HomeKitService.parseTriggerName(trigger.name)?.expiresAt
+                let isOrphan = HomeKitService.isOrphanedTrigger(chainResolved: chainResolved, expiresAt: expiresAt)
 
-                // Verificar si hay un lock activo for this trigger
-                let hasActiveLock: Bool
-                if let parsed = HomeKitService.parseTriggerName(trigger.name) {
-                    hasActiveLock = locks[parsed.accessoryUUID] != nil
-                } else {
-                    hasActiveLock = locks.values.contains { $0.triggerID == trigger.uniqueIdentifier }
-                }
-
-                if !hasActiveLock {
-                    print("🚨 [LockManager] Trigger huérfano detectado: \(trigger.name)")
-
+                if isOrphan {
+                    print("🚨 [LockManager] Trigger huérfano detectado (chain: \(chainResolved), exp: \(expiresAt?.description ?? "none")): \(trigger.name)")
                     do {
-                        // Eliminar trigger directamente sin buscar accesorio
-                        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                            home.removeTrigger(trigger) { error in
-                                if let error {
-                                    print("❌ [LockManager] Error eliminando trigger: \(error)")
-                                    continuation.resume(throwing: error)
-                                } else {
-                                    print("✅ [LockManager] Trigger huérfano eliminado: \(trigger.name)")
-                                    continuation.resume()
-                                }
-                            }
-                        }
-
-                        // También eliminar ActionSets asociados
-                        if let eventTrigger = trigger as? HMEventTrigger {
-                            for actionSet in eventTrigger.actionSets {
-                                if actionSet.name.hasPrefix("HomeLock_Revert_") {
-                                    print("🧹 [LockManager] Eliminando ActionSet asociado: \(actionSet.name)")
-                                    try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                                        home.removeActionSet(actionSet) { error in
-                                            if let error {
-                                                print("⚠️ [LockManager] Error eliminando ActionSet: \(error.localizedDescription)")
-                                            }
-                                            continuation.resume()
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
+                        try await homeKit.removeHomeLockTrigger(trigger, in: home)
                         removedCount += 1
-
                     } catch {
                         print("❌ [LockManager] Error eliminando trigger huérfano: \(error)")
                     }
                 } else {
-                    print("✅ [LockManager] Trigger válido (tiene lock activo): \(trigger.name)")
+                    print("✅ [LockManager] Trigger válido: \(trigger.name)")
                 }
             }
 
