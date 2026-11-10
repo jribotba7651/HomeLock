@@ -6,8 +6,6 @@
 	<array>
 		<string>com.jibaroenlaluna.homelock.expireLock</string>
 	</array>
-	<key>CKSharingSupported</key>
-	<true/>
 	<key>NSFaceIDUsageDescription</key>
 	<string>HomeLock uses Face ID to give you quick, secure access to the app.</string>
 	<key>NSHomeKitUsageDescription</key>
