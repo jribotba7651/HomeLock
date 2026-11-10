@@ -122,6 +122,9 @@ class HomeKitService: NSObject, ObservableObject {
 
     private var homeManager: HMHomeManager?
 
+    /// Maximum number of HomeLock_ triggers per home.
+    nonisolated static let maxHomeLockTriggers = 50
+
     override init() {
         super.init()
     }
@@ -332,50 +335,17 @@ class HomeKitService: NSObject, ObservableObject {
         let homeLockActionSets = home.actionSets.filter { $0.name.hasPrefix("HomeLock_") }
         print("🧹 [HomeLock] ANTES - HomeLock triggers: \(homeLockTriggers.count), ActionSets: \(homeLockActionSets.count)")
 
-        // PROTECCIÓN: Si hay demasiados triggers, limpiar todo
-        // Aumentamos límites para hogares con muchos dispositivos Kasa
-        let totalTriggers = home.triggers.count
-        if totalTriggers > 100 || homeLockTriggers.count > 50 {
-            print("🚨 [HomeLock] PROTECCIÓN DE LÍMITES! Total triggers: \(totalTriggers), HomeLock: \(homeLockTriggers.count)")
-            print("🧹 [HomeLock] Ejecutando limpieza masiva...")
-
-            let isolateLutron = Self.shouldIgnoreLutron
-
-            // Limpiar TODOS los triggers HomeLock — pero respetando el aislamiento.
-            // Si el flag está activo, saltamos los triggers cuyo accesorio es Lutron
-            // para no enviar borrados al bridge.
-            for trigger in homeLockTriggers {
-                if isolateLutron && triggerReferencesLutron(trigger, in: home) {
-                    print("🚫 [HomeLock] Skip trigger Lutron en limpieza masiva: \(trigger.name)")
-                    continue
-                }
-                print("🧹 [HomeLock] Eliminando trigger: \(trigger.name)")
-
-                // Eliminar action sets del trigger
-                if let eventTrigger = trigger as? HMEventTrigger {
-                    for actionSet in eventTrigger.actionSets where actionSet.name.hasPrefix("HomeLock_") {
-                        try? await home.removeActionSet(actionSet)
-                    }
-                }
-
-                try? await home.removeTrigger(trigger)
-            }
-
-            // Limpiar action sets huérfanos — saltando los que pertenecen a Lutron.
-            for actionSet in homeLockActionSets {
-                if isolateLutron, let action = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
-                   let actionAccessory = action.characteristic.service?.accessory,
-                   isLutronDevice(actionAccessory) {
-                    print("🚫 [HomeLock] Skip ActionSet Lutron en limpieza masiva: \(actionSet.name)")
-                    continue
-                }
-                try? await home.removeActionSet(actionSet)
-            }
-
-            print("🧹 [HomeLock] Limpieza masiva completada")
-
-            // Pausa para estabilizar HomeKit
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 segundo
+        // Limit check uses only HomeLock's own triggers. Never mass-delete active,
+        // unexpired triggers to make room: throw a clear error instead. The trigger
+        // being replaced for this same accessory doesn't count against the limit.
+        let replacingOwnTrigger = homeLockTriggers.contains { trigger in
+            !trigger.name.hasPrefix(actionSetPrefix)
+                && (resolveAccessory(for: trigger)?.uniqueIdentifier == accessory.uniqueIdentifier
+                    || trigger.name.hasPrefix(triggerPrefix))
+        }
+        if !replacingOwnTrigger && homeLockTriggers.count >= Self.maxHomeLockTriggers {
+            print("🚨 [HomeLock] Trigger limit reached: \(homeLockTriggers.count) HomeLock triggers")
+            throw HomeKitError.triggerLimitReached
         }
 
         print("🔒 [HomeLock] Todos los triggers en home (\(home.triggers.count)):")
@@ -1061,6 +1031,7 @@ enum HomeKitError: LocalizedError {
     case characteristicNotFound
     case homeNotFound
     case triggerCreationFailed
+    case triggerLimitReached
     case unknown
 
     var errorDescription: String? {
@@ -1073,6 +1044,8 @@ enum HomeKitError: LocalizedError {
             return "No se encontró el home del accesorio"
         case .triggerCreationFailed:
             return "No se pudo crear el trigger de bloqueo"
+        case .triggerLimitReached:
+            return "HomeLock has reached the maximum of \(HomeKitService.maxHomeLockTriggers) active locks in this home. Unlock a device before locking another."
         case .unknown:
             return "Error desconocido en HomeKit"
         }
