@@ -398,6 +398,8 @@ class HomeKitService: NSObject, ObservableObject {
             }
         }
 
+        let isLutron = isLutronDevice(accessory)
+
         // Stabilization pause for HomeKit sync
         try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
 
