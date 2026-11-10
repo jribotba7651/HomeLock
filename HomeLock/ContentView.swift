@@ -39,7 +39,7 @@ struct ContentView: View {
         .onAppear {
             homeKit.requestAuthorization()
         }
-        .onChange(of: homeKit.isAuthorized) { _, isAuthorized in
+        .onChange(of: homeKit.isAuthorized, initial: true) { _, isAuthorized in
             if isAuthorized {
                 lockManager.configure()
                 lockManager.configure(modelContext: modelContext)
