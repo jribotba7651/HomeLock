@@ -74,6 +74,8 @@ struct HomeLockApp: App {
                     // Wait for HomeKit to be ready before syncing
                     await HomeKitService.shared.waitServiceReady()
                     await LockManager.shared.syncFromHomeKit()
+                    // Reconcile schedules on foreground
+                    ScheduleManager.shared.checkSchedules()
                 }
             }
         }

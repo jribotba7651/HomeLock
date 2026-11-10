@@ -487,7 +487,8 @@ class LockManager: ObservableObject {
             accessoryName: accessory.name,
             triggerID: triggerID,
             lockedState: lockedState,
-            duration: duration
+            duration: duration,
+            expiresAt: expiresAt
         )
 
         // CloudKit sync removed: HomeKit triggers are now the source of truth
@@ -500,7 +501,8 @@ class LockManager: ObservableObject {
         accessoryName: String,
         triggerID: UUID,
         lockedState: Bool,
-        duration: TimeInterval?
+        duration: TimeInterval?,
+        expiresAt explicitExpiresAt: Date? = nil
     ) {
         // Enforce device limit for free users
         guard canAddLock || isLocked(accessoryID) else {
@@ -508,7 +510,9 @@ class LockManager: ObservableObject {
             return
         }
 
-        let expiresAt = duration.map { Date().addingTimeInterval($0) }
+        // An explicit expiration (e.g. end of a schedule window, or the timestamp
+        // embedded in the trigger name) wins over a computed one.
+        let expiresAt = explicitExpiresAt ?? duration.map { Date().addingTimeInterval($0) }
 
         let config = LockConfiguration(
             id: UUID(),

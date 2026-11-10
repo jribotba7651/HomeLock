@@ -18,11 +18,22 @@ class ScheduleManager: ObservableObject {
     private var timer: Timer?
     private var modelContext: ModelContext?
 
-    // Track which schedules have active locks created by this manager
+    // Track which schedules have active locks created by this manager.
+    // Persisted (scheduleID -> accessoryUUID) so it survives relaunch and so a
+    // deleted schedule's lock can still be released.
     @Published private(set) var activeScheduleLocks: Set<UUID> = [] // schedule IDs with active locks
+    private var activeScheduleAccessories: [UUID: UUID] = [:] { // scheduleID -> accessoryUUID
+        didSet {
+            activeScheduleLocks = Set(activeScheduleAccessories.keys)
+            persistActiveScheduleLocks()
+        }
+    }
+    private var inFlight: Set<UUID> = []
+    private static let activeScheduleLocksKey = "HomeLock_ActiveScheduleLocks"
 
     private init() {
         print("📅 [ScheduleManager] Initializing singleton instance")
+        loadActiveScheduleLocks()
     }
 
     deinit {
@@ -59,6 +70,69 @@ class ScheduleManager: ObservableObject {
         print("📅 [ScheduleManager] Stopped schedule monitoring")
     }
 
+    // MARK: - Persistence
+
+    private func persistActiveScheduleLocks() {
+        let dict = Dictionary(uniqueKeysWithValues: activeScheduleAccessories.map { ($0.key.uuidString, $0.value.uuidString) })
+        UserDefaults.standard.set(dict, forKey: Self.activeScheduleLocksKey)
+    }
+
+    private func loadActiveScheduleLocks() {
+        guard let dict = UserDefaults.standard.dictionary(forKey: Self.activeScheduleLocksKey) as? [String: String] else { return }
+        var restored: [UUID: UUID] = [:]
+        for (key, value) in dict {
+            if let scheduleID = UUID(uuidString: key), let accessoryID = UUID(uuidString: value) {
+                restored[scheduleID] = accessoryID
+            }
+        }
+        activeScheduleAccessories = restored
+        print("📅 [ScheduleManager] Restored \(restored.count) active schedule lock(s)")
+    }
+
+    // MARK: - Window Math
+
+    /// Returns the end of the schedule window that contains `now`, or nil if `now`
+    /// is outside every window. `days` uses Calendar weekdays (1=Sunday ... 7=Saturday).
+    /// Overnight windows (start > end, e.g. 21:00-07:00) belong to their START day:
+    /// a Monday-only 21:00-07:00 schedule is active Monday 21:00 to Tuesday 07:00.
+    /// Equal start and end times never produce an active window.
+    nonisolated static func activeWindowEnd(now: Date, start: Date, end: Date, days: [Int], calendar: Calendar = .current) -> Date? {
+        let startMinutes = calendar.component(.hour, from: start) * 60 + calendar.component(.minute, from: start)
+        let endMinutes = calendar.component(.hour, from: end) * 60 + calendar.component(.minute, from: end)
+        let nowMinutes = calendar.component(.hour, from: now) * 60 + calendar.component(.minute, from: now)
+        let today = calendar.startOfDay(for: now)
+
+        func at(_ minutes: Int, on day: Date) -> Date? {
+            calendar.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: day)
+        }
+        func isScheduled(_ day: Date) -> Bool {
+            days.contains(calendar.component(.weekday, from: day))
+        }
+
+        if startMinutes < endMinutes {
+            // Same-day window
+            guard isScheduled(today), nowMinutes >= startMinutes, nowMinutes < endMinutes else { return nil }
+            return at(endMinutes, on: today)
+        } else if startMinutes > endMinutes {
+            // Overnight window
+            if nowMinutes >= startMinutes, isScheduled(today),
+               let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) {
+                return at(endMinutes, on: tomorrow)
+            }
+            if nowMinutes < endMinutes,
+               let yesterday = calendar.date(byAdding: .day, value: -1, to: today),
+               isScheduled(yesterday) {
+                return at(endMinutes, on: today)
+            }
+            return nil
+        }
+        return nil
+    }
+
+    // MARK: - Reconciliation
+
+    /// Reconciles schedules with locks. Called every minute and when the app
+    /// returns to foreground.
     func checkSchedules() {
         guard let modelContext = modelContext else {
             print("📅 [ScheduleManager] ModelContext not available")
@@ -66,8 +140,6 @@ class ScheduleManager: ObservableObject {
         }
 
         let now = Date()
-        let calendar = Calendar.current
-        let currentDayOfWeek = calendar.component(.weekday, from: now)
 
         // Fetch enabled schedules
         let descriptor = FetchDescriptor<LockSchedule>(
@@ -81,60 +153,53 @@ class ScheduleManager: ObservableObject {
 
         print("📅 [ScheduleManager] Checking \(schedules.count) enabled schedules")
 
+        // Schedules that were disabled or deleted: release their locks
+        let enabledIDs = Set(schedules.map(\.id))
+        for scheduleID in activeScheduleLocks where !enabledIDs.contains(scheduleID) {
+            releaseLock(forScheduleID: scheduleID)
+        }
+
         for schedule in schedules {
-            // Check if today is a scheduled day
-            guard schedule.daysOfWeek.contains(currentDayOfWeek) else {
-                // Not scheduled for today, ensure lock is deactivated
-                if activeScheduleLocks.contains(schedule.id) {
-                    Task {
-                        await deactivateLockIfNeeded(for: schedule)
-                    }
-                }
-                continue
-            }
-
-            // Check if current time is within schedule
-            if isTimeInRange(now: now, start: schedule.startTime, end: schedule.endTime) {
+            if let windowEnd = Self.activeWindowEnd(now: now, start: schedule.startTime, end: schedule.endTime, days: schedule.daysOfWeek) {
                 // Should be locked
-                if !activeScheduleLocks.contains(schedule.id) {
+                if !activeScheduleLocks.contains(schedule.id) && !inFlight.contains(schedule.id) {
+                    inFlight.insert(schedule.id)
                     Task {
-                        await activateLockIfNeeded(for: schedule)
+                        await activateLockIfNeeded(for: schedule, until: windowEnd)
+                        inFlight.remove(schedule.id)
                     }
                 }
-            } else {
+            } else if activeScheduleLocks.contains(schedule.id) && !inFlight.contains(schedule.id) {
                 // Should be unlocked
-                if activeScheduleLocks.contains(schedule.id) {
-                    Task {
-                        await deactivateLockIfNeeded(for: schedule)
-                    }
+                inFlight.insert(schedule.id)
+                Task {
+                    await deactivateLockIfNeeded(scheduleID: schedule.id, accessoryUUID: schedule.accessoryUUID, accessoryName: schedule.accessoryName)
+                    inFlight.remove(schedule.id)
                 }
             }
         }
     }
 
-    private func isTimeInRange(now: Date, start: Date, end: Date) -> Bool {
-        let calendar = Calendar.current
-        let nowMinutes = calendar.component(.hour, from: now) * 60 + calendar.component(.minute, from: now)
-        let startMinutes = calendar.component(.hour, from: start) * 60 + calendar.component(.minute, from: start)
-        let endMinutes = calendar.component(.hour, from: end) * 60 + calendar.component(.minute, from: end)
-
-        if startMinutes <= endMinutes {
-            // Same day range (e.g., 9am - 5pm)
-            return nowMinutes >= startMinutes && nowMinutes < endMinutes
-        } else {
-            // Overnight range (e.g., 9pm - 7am)
-            return nowMinutes >= startMinutes || nowMinutes < endMinutes
+    /// Releases the active lock of a schedule that is being disabled or deleted.
+    /// Safe to call when the schedule has no active lock.
+    func releaseLock(forScheduleID scheduleID: UUID) {
+        guard let accessoryUUID = activeScheduleAccessories[scheduleID], !inFlight.contains(scheduleID) else { return }
+        let name = LockManager.shared.locks[accessoryUUID]?.accessoryName ?? ""
+        inFlight.insert(scheduleID)
+        Task {
+            await deactivateLockIfNeeded(scheduleID: scheduleID, accessoryUUID: accessoryUUID, accessoryName: name, notes: "Schedule disabled or deleted")
+            inFlight.remove(scheduleID)
         }
     }
 
-    private func activateLockIfNeeded(for schedule: LockSchedule) async {
+    private func activateLockIfNeeded(for schedule: LockSchedule, until windowEnd: Date) async {
         let homeKit = HomeKitService.shared
         let lockManager = LockManager.shared
 
         // Check if already locked (by any means, not just schedule)
         guard !lockManager.isLocked(schedule.accessoryUUID) else {
             print("📅 [ScheduleManager] \(schedule.accessoryName) already locked")
-            activeScheduleLocks.insert(schedule.id)
+            activeScheduleAccessories[schedule.id] = schedule.accessoryUUID
             return
         }
 
@@ -152,34 +217,36 @@ class ScheduleManager: ObservableObject {
             return
         }
 
-        print("📅 [ScheduleManager] Activating scheduled lock for \(schedule.accessoryName)")
+        print("📅 [ScheduleManager] Activating scheduled lock for \(schedule.accessoryName) until \(windowEnd)")
 
         let isLutron = homeKit.isLutronDevice(accessory)
 
         do {
+            // Schedule locks expire at the end of the window (never indefinite), so
+            // they are released even if the app isn't running when the window ends.
             let triggerID: UUID
             if isLutron {
                 // Serialize through the bridge gatekeeper to avoid saturating the
                 // Caséta Smart Hub's Clear Connect radio.
                 triggerID = try await LutronBridgeGatekeeper.shared.run(for: accessory) {
                     try await homeKit.setAccessoryPower(accessory, on: false)
-                    return try await homeKit.createLockTrigger(for: accessory, lockedState: false)
+                    return try await homeKit.createLockTrigger(for: accessory, lockedState: false, expiresAt: windowEnd)
                 }
             } else {
                 try await homeKit.setAccessoryPower(accessory, on: false)
-                triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: false)
+                triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: false, expiresAt: windowEnd)
             }
 
-            // Add the lock (no expiration for scheduled locks - they're managed by schedule)
             lockManager.addLock(
                 accessoryID: accessory.uniqueIdentifier,
                 accessoryName: accessory.name,
                 triggerID: triggerID,
                 lockedState: false,
-                duration: nil  // Indefinite - schedule manager controls duration
+                duration: windowEnd.timeIntervalSinceNow,
+                expiresAt: windowEnd
             )
 
-            activeScheduleLocks.insert(schedule.id)
+            activeScheduleAccessories[schedule.id] = schedule.accessoryUUID
 
             // Log event
             logEvent(.locked, accessoryUUID: schedule.accessoryUUID, accessoryName: schedule.accessoryName, notes: "Scheduled lock")
@@ -191,25 +258,25 @@ class ScheduleManager: ObservableObject {
         }
     }
 
-    private func deactivateLockIfNeeded(for schedule: LockSchedule) async {
+    private func deactivateLockIfNeeded(scheduleID: UUID, accessoryUUID: UUID, accessoryName: String, notes: String = "Schedule ended") async {
         let lockManager = LockManager.shared
 
-        // Check if locked
-        guard lockManager.isLocked(schedule.accessoryUUID) else {
-            print("📅 [ScheduleManager] \(schedule.accessoryName) not locked")
-            activeScheduleLocks.remove(schedule.id)
+        // Check if locked (it may already have expired at window end)
+        guard lockManager.isLocked(accessoryUUID) else {
+            print("📅 [ScheduleManager] \(accessoryName) not locked")
+            activeScheduleAccessories.removeValue(forKey: scheduleID)
             return
         }
 
-        print("📅 [ScheduleManager] Deactivating scheduled lock for \(schedule.accessoryName)")
+        print("📅 [ScheduleManager] Deactivating scheduled lock for \(accessoryName)")
 
-        await lockManager.removeLock(for: schedule.accessoryUUID)
-        activeScheduleLocks.remove(schedule.id)
+        await lockManager.removeLock(for: accessoryUUID)
+        activeScheduleAccessories.removeValue(forKey: scheduleID)
 
         // Log event
-        logEvent(.expired, accessoryUUID: schedule.accessoryUUID, accessoryName: schedule.accessoryName, notes: "Schedule ended")
+        logEvent(.expired, accessoryUUID: accessoryUUID, accessoryName: accessoryName, notes: notes)
 
-        print("📅 [ScheduleManager] Scheduled lock deactivated for \(schedule.accessoryName)")
+        print("📅 [ScheduleManager] Scheduled lock deactivated for \(accessoryName)")
     }
 
     // MARK: - Event Logging

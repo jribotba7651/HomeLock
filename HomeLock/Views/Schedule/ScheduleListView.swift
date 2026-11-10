@@ -97,6 +97,8 @@ struct ScheduleListView: View {
 
     func deleteSchedules(at offsets: IndexSet) {
         for index in offsets {
+            // Release the schedule's active lock before deleting it
+            ScheduleManager.shared.releaseLock(forScheduleID: schedules[index].id)
             modelContext.delete(schedules[index])
         }
     }
@@ -124,6 +126,14 @@ struct ScheduleRow: View {
 
             Toggle("", isOn: $schedule.isEnabled)
                 .labelsHidden()
+                .onChange(of: schedule.isEnabled) { _, isEnabled in
+                    if isEnabled {
+                        ScheduleManager.shared.checkSchedules()
+                    } else {
+                        // Disabling a schedule releases its active lock
+                        ScheduleManager.shared.releaseLock(forScheduleID: schedule.id)
+                    }
+                }
         }
         .padding(.vertical, 4)
     }
