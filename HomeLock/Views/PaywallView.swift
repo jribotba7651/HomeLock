@@ -119,13 +119,6 @@ struct PaywallView: View {
                             )
 
                             FeatureRow(
-                                icon: "person.3.fill",
-                                iconColor: .cyan,
-                                title: "Multi-User Sync",
-                                description: "Keep your whole family protected"
-                            )
-
-                            FeatureRow(
                                 icon: "bell.badge.fill",
                                 iconColor: .purple,
                                 title: "Priority Notifications",
