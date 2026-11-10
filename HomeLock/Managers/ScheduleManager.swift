@@ -29,6 +29,11 @@ class ScheduleManager: ObservableObject {
         }
     }
     private var inFlight: Set<UUID> = []
+    // Schedules whose window started while the accessory already had a lock this
+    // manager didn't create (e.g. a manual lock). scheduleID -> window end. The
+    // schedule never takes ownership of that lock; this only avoids re-logging the
+    // skip every minute for the same window.
+    private var skippedWindows: [UUID: Date] = [:]
     private static let activeScheduleLocksKey = "HomeLock_ActiveScheduleLocks"
 
     private init() {
@@ -129,6 +134,23 @@ class ScheduleManager: ObservableObject {
         return nil
     }
 
+    // MARK: - Ownership
+
+    enum ActivationDecision: Equatable {
+        /// Accessory is free: lock it until the window end and record ownership.
+        case lock
+        /// Accessory already has a lock the schedule didn't create: leave it alone,
+        /// don't record ownership. `log` is true only the first time in a window.
+        case skipExistingLock(log: Bool)
+    }
+
+    /// Pure ownership decision for a schedule whose window is active and that has no
+    /// lock of its own yet.
+    nonisolated static func activationDecision(isAccessoryLocked: Bool, skippedWindowEnd: Date?, windowEnd: Date) -> ActivationDecision {
+        guard isAccessoryLocked else { return .lock }
+        return .skipExistingLock(log: skippedWindowEnd != windowEnd)
+    }
+
     // MARK: - Reconciliation
 
     /// Reconciles schedules with locks. Called every minute and when the app
@@ -158,6 +180,9 @@ class ScheduleManager: ObservableObject {
         for scheduleID in activeScheduleLocks where !enabledIDs.contains(scheduleID) {
             releaseLock(forScheduleID: scheduleID)
         }
+
+        // Forget skip markers for windows that ended or schedules no longer enabled
+        skippedWindows = skippedWindows.filter { enabledIDs.contains($0.key) && $0.value > now }
 
         for schedule in schedules {
             if let windowEnd = Self.activeWindowEnd(now: now, start: schedule.startTime, end: schedule.endTime, days: schedule.daysOfWeek) {
@@ -196,11 +221,22 @@ class ScheduleManager: ObservableObject {
         let homeKit = HomeKitService.shared
         let lockManager = LockManager.shared
 
-        // Check if already locked (by any means, not just schedule)
-        guard !lockManager.isLocked(schedule.accessoryUUID) else {
-            print("📅 [ScheduleManager] \(schedule.accessoryName) already locked")
-            activeScheduleAccessories[schedule.id] = schedule.accessoryUUID
+        // An existing lock (manual, Shortcut, another schedule) is never adopted:
+        // the schedule doesn't record it and won't remove it at window end. If that
+        // lock ends while the window is still active, the next check locks normally.
+        switch Self.activationDecision(
+            isAccessoryLocked: lockManager.isLocked(schedule.accessoryUUID),
+            skippedWindowEnd: skippedWindows[schedule.id],
+            windowEnd: windowEnd
+        ) {
+        case .skipExistingLock(let log):
+            if log {
+                print("📅 [ScheduleManager] \(schedule.accessoryName) already locked by another lock; schedule will not take ownership")
+            }
+            skippedWindows[schedule.id] = windowEnd
             return
+        case .lock:
+            skippedWindows.removeValue(forKey: schedule.id)
         }
 
         // Find the accessory
