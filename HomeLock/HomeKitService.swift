@@ -384,44 +384,22 @@ class HomeKitService: NSObject, ObservableObject {
             print("   \(isHomeLock) \(existingTrigger.name): enabled=\(existingTrigger.isEnabled)")
         }
 
-        // Eliminar TODOS los triggers HomeLock_ para este dispositivo (matches both old and new name format)
-        let triggersToRemove = home.triggers.filter { $0.name.hasPrefix(triggerPrefix) }
+        // Remove existing HomeLock_ triggers for this accessory before creating a new
+        // one. Matched via the event chain (works for triggers created on any device),
+        // plus the legacy name prefix for triggers created on this device. If a removal
+        // fails with anything other than not-found, abort: creating would leave a duplicate.
+        let triggersToRemove = home.triggers.filter { trigger in
+            guard trigger.name.hasPrefix("HomeLock_"), !trigger.name.hasPrefix(actionSetPrefix) else { return false }
+            if let resolved = resolveAccessory(for: trigger) {
+                return resolved.uniqueIdentifier == accessory.uniqueIdentifier
+            }
+            return trigger.name.hasPrefix(triggerPrefix)
+        }
         print("🧹 [HomeLock] Triggers a eliminar para este dispositivo: \(triggersToRemove.count)")
 
         for trigger in triggersToRemove {
-            print("🧹 [HomeLock] Eliminando trigger: \(trigger.name)...")
-
-            // Primero eliminar action sets asociados
-            if let eventTrigger = trigger as? HMEventTrigger {
-                for actionSet in eventTrigger.actionSets where actionSet.name.hasPrefix(actionSetPrefix) {
-                    print("🧹 [HomeLock] Eliminando ActionSet asociado: \(actionSet.name)")
-                    try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                        home.removeActionSet(actionSet) { error in
-                            if let error {
-                                print("⚠️ [HomeLock] Error eliminando ActionSet: \(error.localizedDescription)")
-                            }
-                            continuation.resume()
-                        }
-                    }
-                }
-            }
-
-            // Luego eliminar el trigger
-            do {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    home.removeTrigger(trigger) { error in
-                        if let error {
-                            print("❌ [HomeLock] Error eliminando trigger: \(error.localizedDescription)")
-                            continuation.resume(throwing: error)
-                        } else {
-                            print("✅ [HomeLock] Trigger eliminado: \(trigger.name)")
-                            continuation.resume()
-                        }
-                    }
-                }
-            } catch {
-                print("⚠️ [HomeLock] Continuando a pesar del error: \(error.localizedDescription)")
-            }
+            print("🧹 [HomeLock] Eliminando trigger existente: \(trigger.name)...")
+            try await removeHomeLockTrigger(trigger, in: home)
         }
 
         // También limpiar ActionSets huérfanos de este dispositivo

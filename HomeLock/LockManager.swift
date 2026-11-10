@@ -40,11 +40,14 @@ struct LockConfiguration: Codable, Identifiable {
 enum LockManagerError: LocalizedError {
     case accessoryNotFound
     case lutronNotSupported
+    case alreadyLocked
 
     var errorDescription: String? {
         switch self {
         case .accessoryNotFound:
             return "Device not found."
+        case .alreadyLocked:
+            return "This device is already locked."
         case .lutronNotSupported:
             return "Lutron devices are currently disabled in HomeLock because their HomeKit bridge loses connection too often, making locks unreliable. You can re-enable them from Settings → HomeKit if you're willing to accept this limitation."
         }
@@ -224,8 +227,21 @@ class LockManager: ObservableObject {
 
         // HomeKit triggers are the source of truth
         let detectedLocks = homeKit.getAllActiveLockTriggers()
-        let detectedByAccessory = Dictionary(grouping: detectedLocks, by: \.accessoryUUID)
-            .compactMapValues(\.first) // one trigger per accessory
+        var detectedByAccessory: [UUID: HomeKitService.DetectedLock] = [:]
+        for (accessoryID, group) in Dictionary(grouping: detectedLocks, by: \.accessoryUUID) {
+            guard let keep = Self.newestLock(in: group, knownTriggerID: locks[accessoryID]?.triggerID) else { continue }
+            detectedByAccessory[accessoryID] = keep
+
+            // Duplicates: keep the newest trigger, remove the rest
+            let extras = group.filter { $0.triggerUUID != keep.triggerUUID }
+            if !extras.isEmpty,
+               let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
+                for extra in extras {
+                    print("🧹 [LockManager Sync] Removing duplicate trigger for \(extra.accessoryName): \(extra.triggerUUID)")
+                    try? await homeKit.removeLockTrigger(triggerID: extra.triggerUUID, for: accessory)
+                }
+            }
+        }
         let detectedAccessoryIDs = Set(detectedByAccessory.keys)
         let localAccessoryIDs = Set(locks.keys)
 
@@ -374,6 +390,23 @@ class LockManager: ObservableObject {
         return true
     }
 
+    /// Picks the trigger to keep when one accessory has several HomeLock_ triggers.
+    /// HomeKit exposes no creation date on triggers, so "newest" is: the trigger this
+    /// device created most recently (the one recorded in the local lock), otherwise
+    /// the one with the latest expiration (indefinite counts as latest).
+    nonisolated static func newestLock(in group: [HomeKitService.DetectedLock], knownTriggerID: UUID?) -> HomeKitService.DetectedLock? {
+        if let knownTriggerID, let known = group.first(where: { $0.triggerUUID == knownTriggerID }) {
+            return known
+        }
+        return group.max { a, b in
+            switch (a.expiresAt, b.expiresAt) {
+            case (nil, _): return false
+            case (_, nil): return true
+            case let (x?, y?): return x < y
+            }
+        }
+    }
+
     /// Configura el ModelContext para el logging de eventos
     func configure(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -425,6 +458,12 @@ class LockManager: ObservableObject {
         guard !homeKit.isLutronDevice(accessory) else {
             print("🚫 [LockManager] Lutron device blocked: \(accessory.name)")
             throw LockManagerError.lutronNotSupported
+        }
+
+        // Don't stack a second lock (and trigger) on an accessory that is already locked
+        guard !isLocked(accessoryID) else {
+            print("⏭️ [LockManager] Accessory already locked: \(accessory.name)")
+            throw LockManagerError.alreadyLocked
         }
 
         // Compute expiresAt BEFORE creating trigger so it gets embedded in the trigger name
