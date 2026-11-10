@@ -2,25 +2,26 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>UIRequiresFullScreen</key>
-	<true/>
-	<key>CKSharingSupported</key>
-	<true/>
-	<key>NSHomeKitUsageDescription</key>
-	<string>HomeLock necesita acceso a HomeKit para controlar tus enchufes inteligentes y aplicar límites de tiempo.</string>
-	<key>NSFaceIDUsageDescription</key>
-	<string>HomeLock utiliza Face ID para proporcionarte acceso rápido y seguro a la aplicación.</string>
-	<key>NSSiriUsageDescription</key>
-	<string>HomeLock utiliza Siri para permitirte bloquear y desbloquear tus dispositivos mediante comandos de voz.</string>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-		<string>processing</string>
-	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.jibaroenlaluna.homelock.expireLock</string>
 	</array>
+	<key>CKSharingSupported</key>
+	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>HomeLock utiliza Face ID para proporcionarte acceso rápido y seguro a la aplicación.</string>
+	<key>NSHomeKitUsageDescription</key>
+	<string>HomeLock necesita acceso a HomeKit para controlar tus enchufes inteligentes y aplicar límites de tiempo.</string>
+	<key>NSSiriUsageDescription</key>
+	<string>HomeLock utiliza Siri para permitirte bloquear y desbloquear tus dispositivos mediante comandos de voz.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>remote-notification</string>
+		<string>processing</string>
+	</array>
+	<key>UIRequiresFullScreen</key>
+	<true/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
