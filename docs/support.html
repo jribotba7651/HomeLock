@@ -34,7 +34,7 @@ footer{text-align:center;padding:48px 24px 0;color:#86868b;font-size:13px;border
 
 <div class="contact-card">
 <p>Need help? Found a bug? Have a feature request?</p>
-<p style="margin-top:12px"><a href="mailto:jribot@gmail.com">jribot@gmail.com</a></p>
+<p style="margin-top:12px"><a href="mailto:info@jibaroenlaluna.com">info@jibaroenlaluna.com</a></p>
 <p style="font-size:13px;color:#86868b;margin-top:8px">We respond within 7 business days.</p>
 </div>
 
@@ -42,7 +42,7 @@ footer{text-align:center;padding:48px 24px 0;color:#86868b;font-size:13px;border
 
 <div class="faq-item">
 <h3>Which smart home devices does HomeLock work with?</h3>
-<p>HomeLock works with any HomeKit-compatible <strong>outlet, switch, or light</strong>. This includes brands like Lutron Caséta, Eve, Meross, Wemo, TP-Link Kasa (HomeKit models), Aqara, and many others. Cameras, doorbells, sensors, smart locks, garage doors, blinds, AC units, faucets, and sprinklers are not supported because the on/off lock paradigm doesn't apply to them.</p>
+<p>HomeLock works with any HomeKit-compatible <strong>outlet, switch, or light</strong>. This includes brands like Eve, Meross, Wemo, TP-Link Kasa (HomeKit models), Aqara, and many others. Cameras, doorbells, sensors, smart locks, garage doors, blinds, AC units, faucets, and sprinklers are not supported because the on/off lock paradigm doesn't apply to them. Lutron Caséta devices aren't supported in this version.</p>
 </div>
 
 <div class="faq-item">
@@ -51,22 +51,11 @@ footer{text-align:center;padding:48px 24px 0;color:#86868b;font-size:13px;border
 </div>
 
 <div class="faq-item">
-<h3>How does Family Sharing work?</h3>
-<p>HomeLock uses iCloud's CloudKit Sharing. When you invite your spouse or family member from within the app, they receive an iMessage link. Tapping the link opens HomeLock on their device and accepts the share. After that, locks, schedules, and history sync between both devices in real time. The link expires after 7 days; if it expires, generate a new one from the Family screen.</p>
-</div>
-
-<div class="faq-item">
-<h3>Notifications take a long time to reach my spouse's iPhone.</h3>
-<p>Cross-user notification latency is typically 5–60 seconds. This is the time HomeKit takes to propagate state changes between iCloud accounts via Apple's infrastructure — it's not under HomeLock's control. If notifications take more than 2 minutes, check that both phones have a stable internet connection and that the family member's device is unlocked.</p>
-</div>
-
-<div class="faq-item">
 <h3>The lock command failed with an error.</h3>
-<p>Most failures come from the smart-home accessory itself. For Lutron Caséta specifically, the bridge may briefly time out under load — HomeLock retries automatically. If you consistently see errors with a specific device:</p>
+<p>Most failures come from the smart-home accessory itself. If you consistently see errors with a specific device:</p>
 <ul>
 <li>Open the Apple Home app and confirm the device is reachable there.</li>
 <li>Reset the accessory by unplugging it for 30 seconds.</li>
-<li>For Lutron, check that your Lutron Caséta Bridge has a wired Ethernet connection.</li>
 <li>If the issue persists, email us with the device brand, model, and a screenshot of the error.</li>
 </ul>
 </div>
@@ -78,12 +67,17 @@ footer{text-align:center;padding:48px 24px 0;color:#86868b;font-size:13px;border
 
 <div class="faq-item">
 <h3>How do I cancel my Pro subscription?</h3>
-<p>HomeLock Pro is a one-time purchase, not a subscription, so there is nothing to cancel. To request a refund, follow Apple's standard refund process at <a href="https://reportaproblem.apple.com" target="_blank">reportaproblem.apple.com</a>.</p>
+<p>HomeLock Pro is a one-time $9.99 purchase, not a subscription, so there is nothing to cancel. To request a refund, follow Apple's standard refund process at <a href="https://reportaproblem.apple.com" target="_blank">reportaproblem.apple.com</a>.</p>
 </div>
 
 <div class="faq-item">
 <h3>Does HomeLock work without internet?</h3>
-<p>Locking and unlocking devices on your local network works offline as long as your iPhone can reach the smart-home accessories directly. Family Sharing, iCloud sync, and Siri Shortcuts that route through Apple require an active internet connection.</p>
+<p>Locking and unlocking devices on your local network works offline as long as your iPhone can reach the smart-home accessories directly. iCloud sync and Siri Shortcuts that route through Apple require an active internet connection.</p>
+</div>
+
+<div class="faq-item">
+<h3>Do schedules work when the app is closed?</h3>
+<p>A schedule starts a lock only while HomeLock is running, either in the foreground or in the background. Once a lock has started, it always ends on time, even if the app is closed.</p>
 </div>
 
 <div class="faq-item">
@@ -93,10 +87,9 @@ footer{text-align:center;padding:48px 24px 0;color:#86868b;font-size:13px;border
 
 <h2>System Requirements</h2>
 <ul>
-<li>iOS 17 or later</li>
-<li>At least one HomeKit-compatible outlet, switch, or light</li>
-<li>iCloud account (for Family Sharing features)</li>
-<li>Face ID or Touch ID supported device (recommended for app-level lock)</li>
+<li>iPhone with iOS 26.2 or later</li>
+<li>A HomeKit home with at least one compatible outlet, switch, or light</li>
+<li>iCloud account (only for syncing your own history and schedules across your devices)</li>
 </ul>
 
 <h2>Privacy</h2>
