@@ -390,7 +390,7 @@ struct SettingsView: View {
 
     private func openSupport() {
         // Open support URL or email
-        if let url = URL(string: "mailto:support@jibaroenlaluna.com?subject=HomeLock%20Support") {
+        if let url = URL(string: "mailto:info@jibaroenlaluna.com?subject=HomeLock%20Support") {
             UIApplication.shared.open(url)
         }
     }
