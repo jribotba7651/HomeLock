@@ -339,6 +339,63 @@ class HomeKitService: NSObject, ObservableObject {
         return calendar.dateComponents([.year, .month, .day, .hour, .minute], from: end)
     }
 
+    /// How a timed lock's trigger is told to stop on the hub.
+    /// - appOnly:   no end condition (build 4 behavior). Enforcement is proven;
+    ///              the lock ends only when the app removes the trigger.
+    /// - timeOfDay: Home-app-style time window (hour/minute only) from the lock
+    ///              start to its end. The window repeats daily, so the app must
+    ///              still remove the trigger later; locks of 24 h or more fall
+    ///              back to appOnly.
+    /// - fullDate:  occurringBefore with year…minute (build 5). Device test of
+    ///              build 5 showed the trigger was not enforced at all.
+    enum LockEndMode: String, CaseIterable, Identifiable {
+        case appOnly, timeOfDay, fullDate
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .appOnly: return "No end condition (build 4)"
+            case .timeOfDay: return "Time-of-day window"
+            case .fullDate: return "Full date (build 5)"
+            }
+        }
+    }
+
+    nonisolated static let lockEndModeKey = "lockEndMode"
+
+    /// Default stays appOnly until a device test confirms a hub-side end works.
+    nonisolated static var lockEndMode: LockEndMode {
+        UserDefaults.standard.string(forKey: lockEndModeKey).flatMap(LockEndMode.init) ?? .appOnly
+    }
+
+    /// End condition for a lock trigger, or nil for "no condition".
+    nonisolated static func lockEndPredicate(start: Date, end: Date?, mode: LockEndMode,
+                                             calendar: Calendar = .current) -> NSPredicate? {
+        guard let end, end > start else { return nil }
+        switch mode {
+        case .appOnly:
+            return nil
+        case .fullDate:
+            return HMEventTrigger.predicateForEvaluatingTrigger(occurringBefore: lockEndComponents(for: end, calendar: calendar))
+        case .timeOfDay:
+            // A daily window cannot describe 24 h or more.
+            guard end.timeIntervalSince(start) < 24 * 3600 else { return nil }
+            // Open the window one minute before the lock starts so the current minute is always inside it.
+            let open = calendar.dateComponents([.hour, .minute], from: start.addingTimeInterval(-60))
+            let closeFull = lockEndComponents(for: end, calendar: calendar)
+            let close = DateComponents(hour: closeFull.hour, minute: closeFull.minute)
+            let openMinutes = open.hour! * 60 + open.minute!
+            let closeMinutes = close.hour! * 60 + close.minute!
+            if closeMinutes > openMinutes {
+                return HMEventTrigger.predicateForEvaluatingTriggerOccurringBetweenDate(with: open, secondDateWith: close)
+            }
+            // Crosses midnight: after the opening time OR before the closing time.
+            return NSCompoundPredicate(orPredicateWithSubpredicates: [
+                HMEventTrigger.predicateForEvaluatingTrigger(occurringAfter: open),
+                HMEventTrigger.predicateForEvaluatingTrigger(occurringBefore: close),
+            ])
+        }
+    }
+
     /// Crea un HMEventTrigger que revierte el estado del dispositivo cuando cambia
     /// - Parameters:
     ///   - accessory: El accesorio a bloquear
@@ -475,11 +532,11 @@ class HomeKitService: NSObject, ObservableObject {
 
         // Crear el trigger con el evento y la acción
         print("🔒 [HomeLock] Creando HMEventTrigger...")
-        // Timed locks carry an end condition evaluated by the Home hub itself:
-        // after expiresAt the trigger stops reverting the device, even if the
-        // app is closed. The app removes the dormant trigger on its next run
-        // (cleanup only). Indefinite locks (nil) have no end condition.
-        let endPredicate = expiresAt.map { HMEventTrigger.predicateForEvaluatingTrigger(occurringBefore: Self.lockEndComponents(for: $0)) }
+        // Optional hub-side end condition (see LockEndMode). Indefinite locks
+        // (expiresAt == nil) never get one.
+        let mode = Self.lockEndMode
+        let endPredicate = Self.lockEndPredicate(start: Date(), end: expiresAt, mode: mode)
+        print("🔒 [HomeLock] Lock end mode: \(mode.rawValue), predicate: \(endPredicate?.predicateFormat ?? "none")")
         let trigger = HMEventTrigger(name: triggerName, events: [event], predicate: endPredicate)
 
         // Agregar trigger al home
@@ -537,6 +594,10 @@ class HomeKitService: NSObject, ObservableObject {
         }
 
 
+        // Verify what HomeKit actually saved; fail loudly instead of reporting
+        // a lock that will not be enforced.
+        try verifySavedLockTrigger(trigger.uniqueIdentifier, in: home, expectedPredicate: endPredicate != nil)
+
         // Verificación final
         print("🔒 [HomeLock] ========== VERIFICACIÓN FINAL ==========")
         print("🔒 [HomeLock] Trigger UUID: \(trigger.uniqueIdentifier)")
@@ -578,6 +639,41 @@ class HomeKitService: NSObject, ObservableObject {
 
 
     /// Crea un ActionSet que revierte el estado del dispositivo
+    /// Re-reads the trigger from home.triggers and checks it is enabled, has
+    /// exactly one characteristic event and one action set with one write.
+    func verifySavedLockTrigger(_ id: UUID, in home: HMHome, expectedPredicate: Bool) throws {
+        guard let saved = home.triggers.first(where: { $0.uniqueIdentifier == id }) as? HMEventTrigger else {
+            throw HomeKitError.triggerVerificationFailed("the trigger is not in the home after saving")
+        }
+        print("🔎 [HomeLock] Saved trigger \(saved.name): enabled=\(saved.isEnabled) events=\(saved.events.count) actionSets=\(saved.actionSets.count) predicate=\(saved.predicate?.predicateFormat ?? "none")")
+        guard saved.isEnabled else {
+            throw HomeKitError.triggerVerificationFailed("the trigger is saved but not enabled")
+        }
+        guard saved.events.count == 1, saved.events.first is HMCharacteristicEvent<NSCopying> else {
+            throw HomeKitError.triggerVerificationFailed("the trigger has \(saved.events.count) events instead of 1 power event")
+        }
+        guard saved.actionSets.count == 1, saved.actionSets.first?.actions.count == 1 else {
+            throw HomeKitError.triggerVerificationFailed("the trigger's action set is missing or empty")
+        }
+        if expectedPredicate && saved.predicate == nil {
+            throw HomeKitError.triggerVerificationFailed("the end condition was dropped when saving")
+        }
+    }
+
+    /// Writes the power state, reads it back from the device and retries once.
+    /// Returns the state the device reports afterwards (nil if unreadable).
+    func setAccessoryPowerVerified(_ accessory: HMAccessory, on: Bool) async throws -> Bool? {
+        try await setAccessoryPower(accessory, on: on)
+        for attempt in 1...2 {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            let actual = await isAccessoryOn(accessory)
+            print("🔎 [HomeLock] Power write check \(attempt): wanted \(on), device reports \(actual.map(String.init) ?? "unknown")")
+            if actual == on || actual == nil { return actual }
+            if attempt == 1 { try await setAccessoryPower(accessory, on: on) }
+        }
+        return await isAccessoryOn(accessory)
+    }
+
     private func createRevertActionSet(home: HMHome, characteristic: HMCharacteristic, targetState: Bool, accessoryName: String) async throws -> HMActionSet {
         let actionSetName = "HomeLock_Revert_\(characteristic.uniqueIdentifier.uuidString)"
         print("🔧 [HomeLock] Creando ActionSet: \(actionSetName)")
@@ -986,6 +1082,7 @@ enum HomeKitError: LocalizedError {
     case homeNotFound
     case triggerCreationFailed
     case triggerLimitReached
+    case triggerVerificationFailed(String)
     case unknown
 
     var errorDescription: String? {
@@ -1000,6 +1097,8 @@ enum HomeKitError: LocalizedError {
             return "No se pudo crear el trigger de bloqueo"
         case .triggerLimitReached:
             return "HomeLock has reached the maximum of \(HomeKitService.maxHomeLockTriggers) active locks in this home. Unlock a device before locking another."
+        case .triggerVerificationFailed(let reason):
+            return "The lock was not saved correctly in HomeKit: \(reason)."
         case .unknown:
             return "Error desconocido en HomeKit"
         }

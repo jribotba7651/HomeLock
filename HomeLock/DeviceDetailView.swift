@@ -311,6 +311,7 @@ struct DeviceDetailView: View {
             let expiresAt = selectedDuration.map { Date().addingTimeInterval($0) }
 
             let triggerID: UUID
+            var reportedState: Bool? = lockToState
             if isLutron {
                 // Serialize through the bridge gatekeeper to avoid saturating the
                 // Caséta Smart Hub's Clear Connect radio with parallel writes.
@@ -319,12 +320,17 @@ struct DeviceDetailView: View {
                     return try await homeKit.createLockTrigger(for: accessory, lockedState: lockToState, expiresAt: expiresAt)
                 }
             } else {
-                try await homeKit.setAccessoryPower(accessory, on: lockToState)
+                reportedState = try await homeKit.setAccessoryPowerVerified(accessory, on: lockToState)
                 triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: lockToState, expiresAt: expiresAt)
             }
 
             await MainActor.run {
-                isOn = lockToState
+                // Show what the device reports, not what we asked for.
+                isOn = reportedState ?? lockToState
+                if let reportedState, reportedState != lockToState {
+                    errorMessage = String(localized: "The lock is active, but \(accessory.name) didn't switch \(lockToState ? "on" : "off"). Check it in the Home app.")
+                    showingError = true
+                }
                 lockManager.addLock(
                     accessoryID: accessory.uniqueIdentifier,
                     accessoryName: accessory.name,

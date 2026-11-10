@@ -476,7 +476,7 @@ class LockManager: ObservableObject {
         let expiresAt = duration.map { Date().addingTimeInterval($0) }
 
         // 1. Set power state (Lutron already rejected above)
-        try await homeKit.setAccessoryPower(accessory, on: lockedState)
+        _ = try await homeKit.setAccessoryPowerVerified(accessory, on: lockedState)
 
         // 2. Create trigger with expiration embedded in name
         let triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: lockedState, expiresAt: expiresAt)

@@ -269,7 +269,7 @@ class ScheduleManager: ObservableObject {
                     return try await homeKit.createLockTrigger(for: accessory, lockedState: false, expiresAt: windowEnd)
                 }
             } else {
-                try await homeKit.setAccessoryPower(accessory, on: false)
+                _ = try await homeKit.setAccessoryPowerVerified(accessory, on: false)
                 triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: false, expiresAt: windowEnd)
             }
 

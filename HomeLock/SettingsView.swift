@@ -263,6 +263,21 @@ struct SettingsView: View {
                     Text("Remove all HomeLock triggers and automations from your HomeKit. Lutron devices are ignored by default because their HomeKit bridge is unreliable — disable this only if you've confirmed your bridge stays connected.")
                 }
 
+                // MARK: - Lock Diagnostics (TestFlight / DEBUG only)
+                if AppEnvironment.showsDiagnostics {
+                    Section {
+                        NavigationLink {
+                            LockDiagnosticsView()
+                        } label: {
+                            Label("Lock Diagnostics", systemImage: "stethoscope")
+                        }
+                    } header: {
+                        Text("TestFlight")
+                    } footer: {
+                        Text("Not shown in App Store builds.")
+                    }
+                }
+
 #if DEBUG
                 // MARK: - Developer Section (DEBUG only)
                 // Estos controles NO se compilan en builds de Release. Si no los
