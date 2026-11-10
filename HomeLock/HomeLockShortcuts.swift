@@ -70,6 +70,8 @@ struct LockDeviceIntent: AppIntent {
                 lockedState: false // Default to OFF for protection
             )
             return .result(dialog: "Locked \(device.name) for \(durationMinutes) minutes")
+        } catch LockManagerError.alreadyLocked {
+            return .result(dialog: "\(device.name) is already locked")
         } catch {
             throw IntentError.lockFailed(device.name)
         }
