@@ -23,94 +23,83 @@ struct PINSetupView: View {
     }
 
     var body: some View {
-        NavigationView {
-            GeometryReader { geometry in
-                VStack(spacing: 0) {
-                    // Progress indicator
-                    progressIndicator
-                        .padding(.top, 20)
+        VStack(spacing: 0) {
+            progressIndicator
+                .padding(.top, 20)
 
-                    Spacer()
+            Spacer()
 
-                    // Header
-                    VStack(spacing: 16) {
-                        Image(systemName: "lock.shield")
-                            .font(.system(size: 60))
-                            .foregroundColor(.orange)
+            VStack(spacing: 16) {
+                Image(systemName: "lock.shield")
+                    .font(.system(size: 60))
+                    .foregroundColor(.orange)
 
-                        Text(headerTitle)
-                            .font(.title)
-                            .fontWeight(.bold)
-                            .foregroundColor(.primary)
-                            .multilineTextAlignment(.center)
+                Text(headerTitle)
+                    .font(.title)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.center)
 
-                        Text(headerSubtitle)
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 32)
-                    }
-
-                    Spacer().frame(height: 40)
-
-                    // PIN Dots Display
-                    HStack(spacing: 16) {
-                        ForEach(0..<6, id: \.self) { index in
-                            Circle()
-                                .fill(index < currentPIN.count ? Color.orange : Color.gray.opacity(0.3))
-                                .frame(width: 16, height: 16)
-                                .scaleEffect(index < currentPIN.count ? 1.2 : 1.0)
-                                .animation(.easeInOut(duration: 0.2), value: currentPIN.count)
-                        }
-                    }
-                    .padding(.bottom, 40)
-
-                    // Error Message
-                    VStack {
-                        if showingError {
-                            HStack {
-                                Image(systemName: "exclamationmark.circle.fill")
-                                    .foregroundColor(.red)
-                                Text(errorMessage)
-                                    .font(.caption)
-                                    .foregroundColor(.red)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Color.red.opacity(0.1))
-                            .clipShape(Capsule())
-                        } else {
-                            Text("")
-                                .font(.caption)
-                                .frame(height: 20)
-                        }
-                    }
+                Text(headerSubtitle)
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
-                    .padding(.bottom, 20)
+            }
 
-                    Spacer()
+            Spacer().frame(height: 40)
 
-                    // Number Pad
-                    numberPad
-                        .padding(.horizontal, 32)
-
-                    Spacer()
-
-                    // Back button (only on confirm step)
-                    if currentStep == .confirm {
-                        Button("Back") {
-                            goBack()
-                        }
-                        .font(.body)
-                        .foregroundColor(.orange)
-                        .padding(.bottom, 32)
-                    }
+            HStack(spacing: 16) {
+                ForEach(0..<6, id: \.self) { index in
+                    Circle()
+                        .fill(index < currentPIN.count ? Color.orange : Color.gray.opacity(0.3))
+                        .frame(width: 16, height: 16)
+                        .scaleEffect(index < currentPIN.count ? 1.2 : 1.0)
+                        .animation(.easeInOut(duration: 0.2), value: currentPIN.count)
                 }
             }
-            .background(Color(UIColor.systemBackground))
-            .navigationBarHidden(true)
+            .padding(.bottom, 40)
+
+            VStack {
+                if showingError {
+                    HStack {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundColor(.red)
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.red.opacity(0.1))
+                    .clipShape(Capsule())
+                } else {
+                    Text("")
+                        .font(.caption)
+                        .frame(height: 20)
+                }
+            }
+            .padding(.horizontal, 32)
+            .padding(.bottom, 20)
+
+            Spacer()
+
+            numberPad
+                .padding(.horizontal, 32)
+
+            Spacer()
+
+            if currentStep == .confirm {
+                Button("Back") {
+                    goBack()
+                }
+                .font(.body)
+                .foregroundColor(.orange)
+                .padding(.bottom, 32)
+            }
         }
-        .navigationViewStyle(StackNavigationViewStyle())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(UIColor.systemBackground))
     }
 
     // MARK: - Computed Properties

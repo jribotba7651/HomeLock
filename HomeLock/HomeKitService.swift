@@ -58,6 +58,19 @@ class HomeKitService: NSObject, ObservableObject {
             || model.contains("ra3")
     }
 
+    /// `true` si el trigger HomeLock apunta a un accesorio Lutron.
+    /// Uses the event chain (event.characteristic.service.accessory) for cross-device
+    /// stable mapping instead of the UUID in the trigger name.
+    func triggerReferencesLutron(_ trigger: HMTrigger, in home: HMHome) -> Bool {
+        guard trigger.name.hasPrefix("HomeLock_") else { return false }
+        guard let eventTrigger = trigger as? HMEventTrigger,
+              let charEvent = eventTrigger.events.first as? HMCharacteristicEvent<NSCopying>,
+              let accessory = charEvent.characteristic.service?.accessory else {
+            return false
+        }
+        return isLutronDevice(accessory)
+    }
+
     /// Detecta si un accesorio es de la marca TP-Link/Kasa
     func isKasaDevice(_ accessory: HMAccessory) -> Bool {
         let manufacturer = accessory.manufacturer?.lowercased() ?? ""
@@ -142,6 +155,15 @@ class HomeKitService: NSObject, ObservableObject {
             return nil
         }
 
+        // Last-line defense for reads: characteristic reads also travel over
+        // the Caséta bridge's Clear Connect radio. With Lutron isolated, even
+        // a cached read should avoid issuing a fresh readValue() to the bridge.
+        // We return the cached value if present, otherwise nil (caller treats
+        // as "unknown state"), without ever hitting the bridge.
+        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
+            return powerState.value as? Bool
+        }
+
         do {
             // Intentar lectura fresca con un timeout implícito corto
             try await powerState.readValue()
@@ -159,6 +181,17 @@ class HomeKitService: NSObject, ObservableObject {
 
     /// Cambia el estado de un accesorio
     func setAccessoryPower(_ accessory: HMAccessory, on: Bool) async throws {
+        // Last-line defense: the lowest write primitive in the app refuses to
+        // touch a Lutron accessory when isolation is on. Every higher-level
+        // call site is supposed to gate this already, but if any path slipped
+        // past (CloudKit-driven re-application, a forgotten code path, a future
+        // refactor), this guard ensures no characteristic write ever reaches
+        // the Caséta bridge while the user has Lutron isolated.
+        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
+            print("🚫 [HomeKit] BLOCKED setAccessoryPower for isolated Lutron: \(accessory.name)")
+            throw HomeKitError.serviceNotFound
+        }
+
         guard let service = getControllableService(for: accessory),
               let powerState = getPowerStateCharacteristic(for: service) else {
             throw HomeKitError.serviceNotFound
@@ -178,11 +211,22 @@ class HomeKitService: NSObject, ObservableObject {
     /// - Parameters:
     ///   - accessory: El accesorio a bloquear
     ///   - lockedState: El estado al que debe mantenerse (true = on, false = off)
+    ///   - expiresAt: Expiration date embedded in trigger name for cross-device sync (nil = indefinite)
     /// - Returns: El UUID del trigger creado
-    func createLockTrigger(for accessory: HMAccessory, lockedState: Bool) async throws -> UUID {
+    func createLockTrigger(for accessory: HMAccessory, lockedState: Bool, expiresAt: Date? = nil) async throws -> UUID {
         print("🔒 [HomeLock] ========== CREANDO LOCK TRIGGER ==========")
         print("🔒 [HomeLock] Dispositivo: \(accessory.name)")
         print("🔒 [HomeLock] Estado a mantener: \(lockedState ? "ON" : "OFF")")
+
+        // Lutron isolation: when the user has Lutron isolated (default), refuse
+        // to write triggers to a Lutron device. This is defense-in-depth — UI and
+        // schedulers already filter Lutron, but a direct call from a deep-linked
+        // path or a stale lock-restore flow could still reach here. Refusing prevents
+        // the bridge saturation that drops the entire Lutron home off HomeKit.
+        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
+            print("🚫 [HomeLock] Refusing to create trigger for isolated Lutron device: \(accessory.name)")
+            throw HomeKitError.serviceNotFound
+        }
 
         guard let home = getHome(for: accessory) else {
             print("❌ [HomeLock] ERROR: No se encontró el home para el accesorio")
@@ -203,7 +247,8 @@ class HomeKitService: NSObject, ObservableObject {
         print("🔒 [HomeLock] PowerState characteristic encontrado: \(powerState.characteristicType)")
         print("🔒 [HomeLock] Valor actual: \(String(describing: powerState.value))")
 
-        let triggerName = "HomeLock_\(accessory.uniqueIdentifier.uuidString)"
+        let triggerName = Self.buildTriggerName(accessoryUUID: accessory.uniqueIdentifier, expiresAt: expiresAt)
+        let triggerPrefix = "HomeLock_\(accessory.uniqueIdentifier.uuidString)"
         let actionSetPrefix = "HomeLock_Revert_"
         print("🔒 [HomeLock] Nombre del trigger: \(triggerName)")
 
@@ -220,8 +265,16 @@ class HomeKitService: NSObject, ObservableObject {
             print("🚨 [HomeLock] PROTECCIÓN DE LÍMITES! Total triggers: \(totalTriggers), HomeLock: \(homeLockTriggers.count)")
             print("🧹 [HomeLock] Ejecutando limpieza masiva...")
 
-            // Limpiar TODOS los triggers HomeLock
+            let isolateLutron = Self.shouldIgnoreLutron
+
+            // Limpiar TODOS los triggers HomeLock — pero respetando el aislamiento.
+            // Si el flag está activo, saltamos los triggers cuyo accesorio es Lutron
+            // para no enviar borrados al bridge.
             for trigger in homeLockTriggers {
+                if isolateLutron && triggerReferencesLutron(trigger, in: home) {
+                    print("🚫 [HomeLock] Skip trigger Lutron en limpieza masiva: \(trigger.name)")
+                    continue
+                }
                 print("🧹 [HomeLock] Eliminando trigger: \(trigger.name)")
 
                 // Eliminar action sets del trigger
@@ -234,8 +287,14 @@ class HomeKitService: NSObject, ObservableObject {
                 try? await home.removeTrigger(trigger)
             }
 
-            // Limpiar action sets huérfanos
+            // Limpiar action sets huérfanos — saltando los que pertenecen a Lutron.
             for actionSet in homeLockActionSets {
+                if isolateLutron, let action = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
+                   let actionAccessory = action.characteristic.service?.accessory,
+                   isLutronDevice(actionAccessory) {
+                    print("🚫 [HomeLock] Skip ActionSet Lutron en limpieza masiva: \(actionSet.name)")
+                    continue
+                }
                 try? await home.removeActionSet(actionSet)
             }
 
@@ -251,8 +310,8 @@ class HomeKitService: NSObject, ObservableObject {
             print("   \(isHomeLock) \(existingTrigger.name): enabled=\(existingTrigger.isEnabled)")
         }
 
-        // Eliminar TODOS los triggers HomeLock_ para este dispositivo
-        let triggersToRemove = home.triggers.filter { $0.name == triggerName }
+        // Eliminar TODOS los triggers HomeLock_ para este dispositivo (matches both old and new name format)
+        let triggersToRemove = home.triggers.filter { $0.name.hasPrefix(triggerPrefix) }
         print("🧹 [HomeLock] Triggers a eliminar para este dispositivo: \(triggersToRemove.count)")
 
         for trigger in triggersToRemove {
@@ -353,6 +412,14 @@ class HomeKitService: NSObject, ObservableObject {
             }
         }
 
+        // Lutron Clear Connect throttle: insert a 500ms gap between consecutive
+        // writes so the Caséta bridge has time to settle. Without this, the three
+        // back-to-back writes (addTrigger → addActionSet → enable) saturate the
+        // 434 MHz radio and the bridge drops the HomeKit connection.
+        if isLutron {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+
         // Agregar action set al trigger
         print("🔒 [HomeLock] Agregando ActionSet al trigger...")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -365,6 +432,10 @@ class HomeKitService: NSObject, ObservableObject {
                     continuation.resume()
                 }
             }
+        }
+
+        if isLutron {
+            try? await Task.sleep(nanoseconds: 500_000_000)
         }
 
         // Habilitar el trigger
@@ -485,15 +556,21 @@ class HomeKitService: NSObject, ObservableObject {
         return actionSet
     }
 
-    /// Elimina un trigger de lock por su UUID
+    /// Elimina un trigger de lock por su UUID. Idempotent: if the trigger was already
+    /// removed by another device, this returns silently without error.
     func removeLockTrigger(triggerID: UUID, for accessory: HMAccessory) async throws {
+        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
+            print("🚫 [HomeKit] Skip removeLockTrigger (Lutron isolated): \(accessory.name)")
+            return
+        }
+
         guard let home = getHome(for: accessory) else {
             throw HomeKitError.homeNotFound
         }
 
-        // Buscar el trigger por UUID
+        // Idempotent: trigger may have been removed by another device already
         guard let trigger = home.triggers.first(where: { $0.uniqueIdentifier == triggerID }) else {
-            print("🧹 [HomeLock] Trigger no encontrado, puede que ya haya sido eliminado")
+            print("🧹 [HomeLock] Trigger no encontrado, puede que ya haya sido eliminado (idempotent)")
             return
         }
 
@@ -516,51 +593,71 @@ class HomeKitService: NSObject, ObservableObject {
             }
         }
 
-        // Eliminar el trigger
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            home.removeTrigger(trigger) { error in
-                if let error {
-                    print("❌ [HomeLock] Error eliminando trigger: \(error)")
-                    continuation.resume(throwing: error)
-                } else {
-                    print("✅ [HomeLock] Trigger eliminado para \(accessory.name)")
-                    continuation.resume()
+        // Eliminar el trigger — idempotent for concurrent removal, loud for real errors
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                home.removeTrigger(trigger) { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        print("✅ [HomeLock] Trigger eliminado para \(accessory.name)")
+                        continuation.resume()
+                    }
                 }
             }
+        } catch let hmError as HMError where Self.isNotFoundError(hmError) {
+            // Expected: another device already removed this trigger
+            print("🔇 [HomeLock] Trigger already removed by another device (code \(hmError.code.rawValue)): \(accessory.name)")
+        } catch {
+            // Unexpected: network, permissions, etc. — log visibly but don't crash
+            print("⚠️ [HomeLock] WARNING: Trigger removal failed with unexpected error: \(error.localizedDescription) (code: \((error as NSError).code))")
         }
 
     }
 
-    /// Elimina un trigger de lock por nombre del accesorio
+    /// Elimina un trigger de lock por nombre del accesorio (matches both old and new name format)
     func removeLockTrigger(for accessory: HMAccessory) async throws {
+        // Aislamiento Lutron: ver nota en la otra sobrecarga.
+        if Self.shouldIgnoreLutron && isLutronDevice(accessory) {
+            print("🚫 [HomeKit] Skip removeLockTrigger by-name (Lutron isolated): \(accessory.name)")
+            return
+        }
+
         guard let home = getHome(for: accessory) else {
             throw HomeKitError.homeNotFound
         }
 
-        let triggerName = "HomeLock_\(accessory.uniqueIdentifier.uuidString)"
+        let triggerPrefix = "HomeLock_\(accessory.uniqueIdentifier.uuidString)"
 
-        guard let trigger = home.triggers.first(where: { $0.name == triggerName }) else {
-            return
-        }
+        // Find all triggers for this device (old format or new format with _exp)
+        let matchingTriggers = home.triggers.filter { $0.name.hasPrefix(triggerPrefix) }
+        guard !matchingTriggers.isEmpty else { return }
 
-        // Eliminar action sets asociados
-        if let eventTrigger = trigger as? HMEventTrigger {
-            for actionSet in eventTrigger.actionSets {
-                if actionSet.name.hasPrefix("HomeLock_Revert_") {
-                    try? await home.removeActionSet(actionSet)
+        for trigger in matchingTriggers {
+            // Eliminar action sets asociados
+            if let eventTrigger = trigger as? HMEventTrigger {
+                for actionSet in eventTrigger.actionSets {
+                    if actionSet.name.hasPrefix("HomeLock_Revert_") {
+                        try? await home.removeActionSet(actionSet)
+                    }
                 }
             }
-        }
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            home.removeTrigger(trigger) { error in
-                if let error {
-                    print("❌ [HomeLock] Error eliminando trigger: \(error)")
-                    continuation.resume(throwing: error)
-                } else {
-                    print("✅ [HomeLock] Trigger eliminado para \(accessory.name)")
-                    continuation.resume()
+            do {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    home.removeTrigger(trigger) { error in
+                        if let error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            print("✅ [HomeLock] Trigger eliminado para \(accessory.name)")
+                            continuation.resume()
+                        }
+                    }
                 }
+            } catch let hmError as HMError where Self.isNotFoundError(hmError) {
+                print("🔇 [HomeLock] Trigger already removed by another device (code \(hmError.code.rawValue)): \(accessory.name)")
+            } catch {
+                print("⚠️ [HomeLock] WARNING: Trigger removal failed with unexpected error: \(error.localizedDescription) (code: \((error as NSError).code))")
             }
         }
 
@@ -570,6 +667,7 @@ class HomeKitService: NSObject, ObservableObject {
     /// - Returns: Número de elementos eliminados (triggers + action sets)
     func removeAllHomeLockAutomations() async -> Int {
         var removedCount = 0
+        let isolateLutron = Self.shouldIgnoreLutron
 
         for home in homes {
             print("🧹 [HomeLock] Limpiando home: \(home.name)")
@@ -579,6 +677,14 @@ class HomeKitService: NSObject, ObservableObject {
             print("🧹 [HomeLock] Encontrados \(homeLockTriggers.count) triggers HomeLock_")
 
             for trigger in homeLockTriggers {
+                // Aislamiento Lutron: incluso un cleanup explícito del usuario debe
+                // saltar Lutron, porque borrar 50 triggers en ráfaga al bridge es
+                // exactamente lo que tira la conexión de toda la casa. Si el usuario
+                // quiere limpiar Lutron, primero desactiva el aislamiento.
+                if isolateLutron && triggerReferencesLutron(trigger, in: home) {
+                    print("🚫 [HomeLock] Skip trigger Lutron en cleanup (aislado): \(trigger.name)")
+                    continue
+                }
                 do {
                     // Primero eliminar action sets asociados al trigger
                     if let eventTrigger = trigger as? HMEventTrigger {
@@ -617,6 +723,13 @@ class HomeKitService: NSObject, ObservableObject {
             print("🧹 [HomeLock] Encontrados \(homeLockActionSets.count) ActionSets HomeLock_")
 
             for actionSet in homeLockActionSets {
+                if isolateLutron,
+                   let action = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
+                   let actionAccessory = action.characteristic.service?.accessory,
+                   isLutronDevice(actionAccessory) {
+                    print("🚫 [HomeLock] Skip ActionSet Lutron en cleanup (aislado): \(actionSet.name)")
+                    continue
+                }
                 do {
                     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                         home.removeActionSet(actionSet) { error in
@@ -650,6 +763,69 @@ class HomeKitService: NSObject, ObservableObject {
         return count
     }
 
+    // MARK: - Trigger Name Parsing
+
+    /// Result of parsing a HomeLock trigger name.
+    struct ParsedTriggerName {
+        let accessoryUUID: UUID
+        /// nil = indefinite (explicit NONE or legacy format).
+        /// Date(timeIntervalSince1970: 0) = malformed expiration (fail-safe: expires immediately).
+        let expiresAt: Date?
+    }
+
+    /// Parses a HomeLock trigger name into its components.
+    ///
+    /// Supports:
+    /// - New format: `HomeLock_{accessoryUUID}_exp{unixTimestamp}`
+    /// - New format (indefinite): `HomeLock_{accessoryUUID}_expNONE`
+    /// - Legacy format: `HomeLock_{accessoryUUID}` (treated as expiresAt: nil)
+    ///
+    /// Uses rsplit (range of "_exp" searching backwards) so that the hyphens
+    /// inside the UUID are never ambiguous with the separator.
+    ///
+    /// Returns nil for non-HomeLock triggers or names that start with "HomeLock_Revert_".
+    static func parseTriggerName(_ name: String) -> ParsedTriggerName? {
+        let prefix = "HomeLock_"
+        guard name.hasPrefix(prefix) else { return nil }
+        guard !name.hasPrefix("HomeLock_Revert_") else { return nil }
+
+        let afterPrefix = String(name.dropFirst(prefix.count))
+
+        // New format: rsplit on "_exp" from the right
+        if let expRange = afterPrefix.range(of: "_exp", options: .backwards) {
+            let uuidString = String(afterPrefix[afterPrefix.startIndex..<expRange.lowerBound])
+            let expValue = String(afterPrefix[expRange.upperBound...])
+
+            guard let accessoryUUID = UUID(uuidString: uuidString) else { return nil }
+
+            if expValue == "NONE" {
+                return ParsedTriggerName(accessoryUUID: accessoryUUID, expiresAt: nil)
+            } else if let timestamp = TimeInterval(expValue), timestamp > 0 {
+                return ParsedTriggerName(accessoryUUID: accessoryUUID, expiresAt: Date(timeIntervalSince1970: timestamp))
+            } else {
+                // Malformed exp value: fail-safe to epoch 0 so it expires immediately
+                // on the next poll. Better a lock that falls off than one that's eternal.
+                print("WARNING [HomeKit] Malformed expiration in trigger name: \(name)")
+                return ParsedTriggerName(accessoryUUID: accessoryUUID, expiresAt: Date(timeIntervalSince1970: 0))
+            }
+        }
+
+        // Legacy format: HomeLock_{accessoryUUID} (no _exp suffix)
+        guard let accessoryUUID = UUID(uuidString: afterPrefix) else { return nil }
+        return ParsedTriggerName(accessoryUUID: accessoryUUID, expiresAt: nil)
+    }
+
+    /// Builds a trigger name embedding the accessory UUID and expiration.
+    static func buildTriggerName(accessoryUUID: UUID, expiresAt: Date?) -> String {
+        let expSuffix: String
+        if let expiresAt {
+            expSuffix = "_exp\(Int(expiresAt.timeIntervalSince1970))"
+        } else {
+            expSuffix = "_expNONE"
+        }
+        return "HomeLock_\(accessoryUUID.uuidString)\(expSuffix)"
+    }
+
     // MARK: - Multi-User Sync Support
 
     /// Estructura para representar un lock detectado desde HomeKit
@@ -659,55 +835,82 @@ class HomeKitService: NSObject, ObservableObject {
         let triggerUUID: UUID
         let lockedState: Bool
         let isEnabled: Bool
+        let expiresAt: Date?
     }
 
-    /// Obtiene todos los triggers de HomeLock activos desde HomeKit
-    /// Esto permite sincronizar con locks creados por otros miembros del hogar
+    /// Obtiene todos los triggers de HomeLock activos desde HomeKit.
+    /// Esta es la fuente de verdad para locks activos cross-device.
+    /// El mapeo trigger -> accessory se hace via la cadena de eventos del trigger
+    /// (event.characteristic.service.accessory), NO por el UUID en el nombre,
+    /// porque uniqueIdentifier es per-device y no es estable cross-device.
     func getAllActiveLockTriggers() -> [DetectedLock] {
         var detectedLocks: [DetectedLock] = []
 
         for home in homes {
             let homeLockTriggers = home.triggers.filter {
-                $0.name.hasPrefix("HomeLock_") && $0.isEnabled
+                $0.name.hasPrefix("HomeLock_") && !$0.name.hasPrefix("HomeLock_Revert_") && $0.isEnabled
             }
 
             for trigger in homeLockTriggers {
-                guard let eventTrigger = trigger as? HMEventTrigger else { continue }
+                guard let eventTrigger = trigger as? HMEventTrigger else {
+                    print("❌ [HomeKit Sync] no es HMEventTrigger: [\(trigger.name)]")
+                    continue
+                }
 
-                // Extraer el UUID del accesorio del nombre del trigger
-                // Formato: HomeLock_{accessoryUUID}
-                let triggerName = trigger.name
-                let uuidString = triggerName.replacingOccurrences(of: "HomeLock_", with: "")
-                guard let accessoryUUID = UUID(uuidString: uuidString) else { continue }
+                // Cross-device mapping: extract accessory from the trigger's event chain.
+                // HomeKit maintains this reference correctly on each device, unlike
+                // uniqueIdentifier which is per-device and not stable cross-device.
+                guard let characteristicEvent = eventTrigger.events.first as? HMCharacteristicEvent<NSCopying> else {
+                    print("❌ [HomeKit Sync] sin HMCharacteristicEvent: [\(trigger.name)]")
+                    continue
+                }
 
-                // Buscar el accesorio
-                guard let accessory = home.accessories.first(where: { $0.uniqueIdentifier == accessoryUUID }) else { continue }
+                guard let accessory = characteristicEvent.characteristic.service?.accessory else {
+                    print("❌ [HomeKit Sync] cadena event->characteristic->service->accessory rota: [\(trigger.name)]")
+                    continue
+                }
 
-                // Determinar el estado bloqueado desde el evento del trigger
+                // Parse expiration from trigger name (the UUID in the name is ignored
+                // for mapping — only _exp{timestamp} / _expNONE matters)
+                let parsed = Self.parseTriggerName(trigger.name)
+                let expiresAt = parsed?.expiresAt
+
+                // triggerValue is the unwanted state; lockedState is the opposite
                 var lockedState = true
-                if let characteristicEvent = eventTrigger.events.first as? HMCharacteristicEvent<NSCopying> {
-                    // El trigger se dispara cuando el estado cambia al valor NO deseado
-                    // Por lo tanto, el estado bloqueado es el opuesto
-                    if let triggerValue = characteristicEvent.triggerValue as? Bool {
-                        lockedState = !triggerValue
-                    }
+                if let triggerValue = characteristicEvent.triggerValue as? Bool {
+                    lockedState = !triggerValue
                 }
 
                 let detected = DetectedLock(
-                    accessoryUUID: accessoryUUID,
+                    accessoryUUID: accessory.uniqueIdentifier,
                     accessoryName: accessory.name,
                     triggerUUID: trigger.uniqueIdentifier,
                     lockedState: lockedState,
-                    isEnabled: trigger.isEnabled
+                    isEnabled: trigger.isEnabled,
+                    expiresAt: expiresAt
                 )
 
                 detectedLocks.append(detected)
-                print("🔍 [HomeKit Sync] Trigger detectado: \(accessory.name) -> \(lockedState ? "ON" : "OFF")")
+                print("🔍 [HomeKit Sync] Trigger detectado: \(accessory.name) (UUID local: \(accessory.uniqueIdentifier)) -> \(lockedState ? "ON" : "OFF"), expires: \(expiresAt?.description ?? "never")")
             }
         }
 
         print("🔍 [HomeKit Sync] Total triggers detectados: \(detectedLocks.count)")
         return detectedLocks
+    }
+
+    // MARK: - Error Classification
+
+    /// Returns true if the HMError indicates the object was already removed or not found.
+    /// These are expected during concurrent removal by multiple devices.
+    static func isNotFoundError(_ error: HMError) -> Bool {
+        switch error.code {
+        case .notFound,
+             .operationNotSupported:  // Some HomeKit versions return this for stale references
+            return true
+        default:
+            return false
+        }
     }
 
     /// Publisher para notificar cambios en los homes
