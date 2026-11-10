@@ -85,7 +85,9 @@ struct DashboardView: View {
                     )
                 } else {
                     List {
-                        SharedLocksView()
+                        if FeatureFlags.familySharingEnabled {
+                            SharedLocksView()
+                        }
                         if homeKit.hiddenLutronCount > 0 {
                             LutronHiddenBanner(count: homeKit.hiddenLutronCount)
                         }
