@@ -1,0 +1,4 @@
+/* Permission strings (Spanish) */
+"NSHomeKitUsageDescription" = "HomeLock necesita acceso a HomeKit para controlar tus enchufes inteligentes y aplicar límites de tiempo.";
+"NSFaceIDUsageDescription" = "HomeLock utiliza Face ID para proporcionarte acceso rápido y seguro a la aplicación.";
+"NSSiriUsageDescription" = "HomeLock utiliza Siri para permitirte bloquear y desbloquear tus dispositivos mediante comandos de voz.";

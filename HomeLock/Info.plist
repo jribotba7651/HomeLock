@@ -9,11 +9,11 @@
 	<key>CKSharingSupported</key>
 	<true/>
 	<key>NSFaceIDUsageDescription</key>
-	<string>HomeLock utiliza Face ID para proporcionarte acceso rápido y seguro a la aplicación.</string>
+	<string>HomeLock uses Face ID to give you quick, secure access to the app.</string>
 	<key>NSHomeKitUsageDescription</key>
-	<string>HomeLock necesita acceso a HomeKit para controlar tus enchufes inteligentes y aplicar límites de tiempo.</string>
+	<string>HomeLock needs access to HomeKit to control your smart plugs and enforce time limits.</string>
 	<key>NSSiriUsageDescription</key>
-	<string>HomeLock utiliza Siri para permitirte bloquear y desbloquear tus dispositivos mediante comandos de voz.</string>
+	<string>HomeLock uses Siri so you can lock and unlock your devices with voice commands.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
