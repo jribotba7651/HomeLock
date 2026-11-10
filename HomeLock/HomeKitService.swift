@@ -326,6 +326,19 @@ class HomeKitService: NSObject, ObservableObject {
         homes.first { $0.accessories.contains(where: { $0.uniqueIdentifier == accessory.uniqueIdentifier }) }
     }
 
+    /// Full calendar date (year…minute, local time) at which a timed lock stops
+    /// being enforced by the hub. HomeKit time predicates work at minute
+    /// granularity, so the end is rounded UP to the next whole minute: the hub
+    /// never releases a lock early (at most 59 s late).
+    nonisolated static func lockEndComponents(for expiresAt: Date, calendar: Calendar = .current) -> DateComponents {
+        let seconds = calendar.component(.second, from: expiresAt)
+        let nanos = calendar.component(.nanosecond, from: expiresAt)
+        let end = (seconds == 0 && nanos == 0)
+            ? expiresAt
+            : calendar.date(byAdding: .second, value: 60 - seconds, to: expiresAt.addingTimeInterval(-Double(nanos) / 1e9))!
+        return calendar.dateComponents([.year, .month, .day, .hour, .minute], from: end)
+    }
+
     /// Crea un HMEventTrigger que revierte el estado del dispositivo cuando cambia
     /// - Parameters:
     ///   - accessory: El accesorio a bloquear
@@ -462,7 +475,12 @@ class HomeKitService: NSObject, ObservableObject {
 
         // Crear el trigger con el evento y la acción
         print("🔒 [HomeLock] Creando HMEventTrigger...")
-        let trigger = HMEventTrigger(name: triggerName, events: [event], predicate: nil)
+        // Timed locks carry an end condition evaluated by the Home hub itself:
+        // after expiresAt the trigger stops reverting the device, even if the
+        // app is closed. The app removes the dormant trigger on its next run
+        // (cleanup only). Indefinite locks (nil) have no end condition.
+        let endPredicate = expiresAt.map { HMEventTrigger.predicateForEvaluatingTrigger(occurringBefore: Self.lockEndComponents(for: $0)) }
+        let trigger = HMEventTrigger(name: triggerName, events: [event], predicate: endPredicate)
 
         // Agregar trigger al home
         print("🔒 [HomeLock] Agregando trigger al home...")
