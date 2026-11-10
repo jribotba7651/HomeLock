@@ -1,47 +1,35 @@
 import Testing
-import HomeKit
+import Foundation
 @testable import HomeLock
 
 struct HomeKitFilteringTests {
 
-    @Test func testLutronFiltering() async throws {
-        // Lutron device -> Should NOT filter (now implementing proper cleanup instead)
-        let shouldFilterLutron = HomeKitService.shouldFilter(
-            manufacturer: "Lutron",
-            services: [HMServiceTypeOutlet]
-        )
-        #expect(shouldFilterLutron == false)
-        
-        // Lutron (case insensitive) -> Should NOT filter
-        let shouldFilterLutronCaps = HomeKitService.shouldFilter(
-            manufacturer: "LUTRON Electronics",
-            services: [HMServiceTypeOutlet]
-        )
-        #expect(shouldFilterLutronCaps == false)
+    @Test func testLutronDetectionByManufacturer() {
+        #expect(HomeKitService.isLutron(manufacturer: "Lutron", model: nil))
+        // Case insensitive
+        #expect(HomeKitService.isLutron(manufacturer: "LUTRON Electronics Co., Inc.", model: "PD-6WCL"))
     }
 
-    @Test func testOtherManufacturersFiltering() async throws {
-        // Kasa device with outlet -> Should NOT filter
-        let shouldFilterKasa = HomeKitService.shouldFilter(
-            manufacturer: "TP-Link",
-            services: [HMServiceTypeOutlet]
-        )
-        #expect(shouldFilterKasa == false)
-        
-        // Unknown manufacturer with light -> Should NOT filter
-        let shouldFilterUnknown = HomeKitService.shouldFilter(
-            manufacturer: "Generic",
-            services: [HMServiceTypeLightbulb]
-        )
-        #expect(shouldFilterUnknown == false)
+    @Test func testLutronDetectionByModelWhenManufacturerMissing() {
+        #expect(HomeKitService.isLutron(manufacturer: nil, model: "Caséta Dimmer"))
+        #expect(HomeKitService.isLutron(manufacturer: "", model: "caseta"))
+        #expect(HomeKitService.isLutron(manufacturer: nil, model: "RA3 Switch"))
     }
 
-    @Test func testUnsupportedDeviceFiltering() async throws {
-        // Device with no supported services -> Should filter
-        let shouldFilterUnsupported = HomeKitService.shouldFilter(
-            manufacturer: "Other",
-            services: [HMServiceTypeBattery] // Generic unsupported service
-        )
-        #expect(shouldFilterUnsupported == true)
+    @Test func testOtherManufacturersAreNotLutron() {
+        #expect(!HomeKitService.isLutron(manufacturer: "TP-Link", model: "HS103"))
+        #expect(!HomeKitService.isLutron(manufacturer: "Generic", model: "Lightbulb"))
+        #expect(!HomeKitService.isLutron(manufacturer: nil, model: nil))
+    }
+
+    @Test @MainActor func testLutronIsolationDefaultsToTrue() {
+        let key = HomeKitService.ignoreLutronDefaultsKey
+        let defaults = UserDefaults.standard
+        let saved = defaults.object(forKey: key)
+        defer {
+            if let saved { defaults.set(saved, forKey: key) } else { defaults.removeObject(forKey: key) }
+        }
+        defaults.removeObject(forKey: key)
+        #expect(HomeKitService.shouldIgnoreLutron == true)
     }
 }

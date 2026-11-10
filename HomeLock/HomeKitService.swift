@@ -46,8 +46,13 @@ class HomeKitService: NSObject, ObservableObject {
 
     /// Detecta si un accesorio es de la marca Lutron
     func isLutronDevice(_ accessory: HMAccessory) -> Bool {
-        let manufacturer = accessory.manufacturer?.lowercased() ?? ""
-        let model = accessory.model?.lowercased() ?? ""
+        Self.isLutron(manufacturer: accessory.manufacturer, model: accessory.model)
+    }
+
+    /// Pure Lutron detection from manufacturer/model strings (testable without HMAccessory).
+    nonisolated static func isLutron(manufacturer: String?, model: String?) -> Bool {
+        let manufacturer = manufacturer?.lowercased() ?? ""
+        let model = model?.lowercased() ?? ""
         // Cubrimos tanto "Lutron Electronics Co., Inc." como nombres de modelo
         // tipo "Caséta" / "RA3" que a veces vienen con manufacturer vacío
         // cuando el bridge expone accesorios puenteados.

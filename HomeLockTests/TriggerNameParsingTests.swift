@@ -2,6 +2,7 @@ import Testing
 import Foundation
 @testable import HomeLock
 
+@MainActor
 struct TriggerNameParsingTests {
 
     // MARK: - New format with timestamp
