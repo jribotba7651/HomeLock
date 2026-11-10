@@ -23,128 +23,25 @@ struct PINSetupView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            progressIndicator
-                .padding(.top, 20)
-
-            Spacer()
-
-            VStack(spacing: 16) {
-                Image(systemName: "lock.shield")
-                    .font(.system(size: 60))
-                    .foregroundColor(.orange)
-
-                Text(headerTitle)
-                    .font(.title)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-                    .multilineTextAlignment(.center)
-
-                Text(headerSubtitle)
-                    .font(.body)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+        PINPadLayout(
+            icon: "lock.shield",
+            title: headerTitle,
+            subtitle: headerSubtitle,
+            enteredCount: currentPIN.count,
+            onDigit: addDigit,
+            onDelete: deleteDigit
+        ) {
+            if showingError {
+                PINMessageCapsule(text: errorMessage)
+            } else {
+                progressIndicator
             }
-
-            Spacer().frame(height: 40)
-
-            HStack(spacing: 16) {
-                ForEach(0..<6, id: \.self) { index in
-                    Circle()
-                        .fill(index < currentPIN.count ? Color.orange : Color.gray.opacity(0.3))
-                        .frame(width: 16, height: 16)
-                        .scaleEffect(index < currentPIN.count ? 1.2 : 1.0)
-                        .animation(.easeInOut(duration: 0.2), value: currentPIN.count)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, 40)
-
-                // Error Message
-                VStack {
-                    if showingError {
-                        HStack {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundColor(.red)
-                            Text(errorMessage)
-                                .font(.caption)
-                                .foregroundColor(.red)
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Color.red.opacity(0.1))
-                        .clipShape(Capsule())
-                    } else {
-                        Text("")
-                            .font(.caption)
-                            .frame(height: 20)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 32)
-                .padding(.bottom, 20)
-
-                Spacer()
-
-                // Number Pad
-                numberPad
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 32)
-
-                Spacer()
-
-                // Back button (only on confirm step)
-                if currentStep == .confirm {
-                    Button("Back") {
-                        goBack()
-                    }
-                    .font(.body)
-                    .foregroundColor(.orange)
-                    .padding(.bottom, 32)
-                }
-            }
-            .padding(.bottom, 40)
-
-            VStack {
-                if showingError {
-                    HStack {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundColor(.red)
-                        Text(errorMessage)
-                            .font(.caption)
-                            .foregroundColor(.red)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Color.red.opacity(0.1))
-                    .clipShape(Capsule())
-                } else {
-                    Text("")
-                        .font(.caption)
-                        .frame(height: 20)
-                }
-            }
-            .padding(.horizontal, 32)
-            .padding(.bottom, 20)
-
-            Spacer()
-
-            numberPad
-                .padding(.horizontal, 32)
-
-            Spacer()
-
+        } footer: {
             if currentStep == .confirm {
-                Button("Back") {
-                    goBack()
-                }
-                .font(.body)
-                .foregroundColor(.orange)
-                .padding(.bottom, 32)
+                Button("Back", action: goBack)
+                    .foregroundStyle(.orange)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(UIColor.systemBackground))
     }
 
     // MARK: - Computed Properties
@@ -183,47 +80,6 @@ struct PINSetupView: View {
                 .fill(currentStep == .confirm ? Color.orange : Color.gray.opacity(0.3))
                 .frame(width: 8, height: 8)
                 .animation(.easeInOut(duration: 0.3), value: currentStep)
-        }
-    }
-
-    // MARK: - Number Pad
-
-    private var numberPad: some View {
-        VStack(spacing: 16) {
-            // Rows 1-3
-            ForEach(0..<3) { row in
-                HStack(spacing: 16) {
-                    ForEach(1..<4) { col in
-                        let number = row * 3 + col
-                        NumberPadButton(number: "\(number)") {
-                            addDigit("\(number)")
-                        }
-                    }
-                }
-            }
-
-            // Bottom row
-            HStack(spacing: 16) {
-                // Empty space
-                Rectangle()
-                    .fill(Color.clear)
-                    .frame(width: 80, height: 80)
-
-                // Zero
-                NumberPadButton(number: "0") {
-                    addDigit("0")
-                }
-
-                // Delete button
-                Button(action: deleteDigit) {
-                    Image(systemName: "delete.left")
-                        .font(.title2)
-                        .foregroundColor(.orange)
-                        .frame(width: 80, height: 80)
-                        .background(Color.gray.opacity(0.1))
-                        .clipShape(Circle())
-                }
-            }
         }
     }
 

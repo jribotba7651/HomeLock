@@ -82,7 +82,7 @@ struct SettingsView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 PremiumFeatureRow(icon: "calendar.badge.clock", title: "Unlimited Schedules", description: "Create unlimited auto-lock schedules")
                                 PremiumFeatureRow(icon: "clock.arrow.circlepath", title: "Full History", description: "Access complete lock/unlock history")
-                                PremiumFeatureRow(icon: "bell.badge.fill", title: "Priority Notifications", description: "Get instant tamper alerts")
+                                PremiumFeatureRow(icon: "lock.fill", title: "Unlimited Locks", description: "Lock any number of devices at once")
                             }
                             .padding(.vertical, 4)
 

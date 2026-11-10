@@ -50,74 +50,27 @@ struct PINEntryView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                Spacer()
-
-                // Title and Subtitle
-                VStack(spacing: 8) {
-                    Text(title)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.primary)
-
-                    Text(subtitle)
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(.horizontal, 32)
-
-                Spacer().frame(height: 40)
-
-                // PIN Dots Display
-                HStack(spacing: 16) {
-                    ForEach(0..<6, id: \.self) { index in
-                        Circle()
-                            .fill(index < pin.count ? Color.orange : Color.gray.opacity(0.3))
-                            .frame(width: 16, height: 16)
-                            .scaleEffect(index < pin.count ? 1.2 : 1.0)
-                            .animation(.easeInOut(duration: 0.2), value: pin.count)
-                    }
-                }
-                .padding(.bottom, 40)
-
-                // Error Message or Lockout Timer
-                VStack {
-                    if isAuthenticateMode && authManager.isLockedOut {
-                        lockoutView
-                    } else if showingError {
-                        errorView
-                    } else {
-                        Text("")
-                            .font(.caption)
-                            .frame(height: 20)
-                    }
-                }
-                .padding(.horizontal, 32)
-                .padding(.bottom, 20)
-
-                Spacer()
-
-                // Number Pad
-                numberPad
-                    .disabled((isAuthenticateMode && authManager.isLockedOut) || isAuthenticating)
-                    .opacity(isAuthenticateMode && authManager.isLockedOut ? 0.5 : 1.0)
-
-                Spacer()
-
-                // Biometric Authentication Button (solo en authenticate mode)
-                if isAuthenticateMode
-                    && biometricManager.isBiometricEnabled
-                    && biometricManager.isBiometricAvailable
-                    && !authManager.isLockedOut {
-                    biometricButton
-                        .padding(.horizontal, 32)
-                        .padding(.bottom, 32)
-                }
+        PINPadLayout(
+            title: title,
+            subtitle: subtitle,
+            enteredCount: pin.count,
+            keypadDisabled: (isAuthenticateMode && authManager.isLockedOut) || isAuthenticating,
+            onDigit: addDigit,
+            onDelete: deleteDigit
+        ) {
+            if isAuthenticateMode && authManager.isLockedOut {
+                lockoutView
+            } else if showingError {
+                PINMessageCapsule(text: errorMessage)
+            }
+        } footer: {
+            if isAuthenticateMode
+                && biometricManager.isBiometricEnabled
+                && biometricManager.isBiometricAvailable
+                && !authManager.isLockedOut {
+                biometricButton
             }
         }
-        .background(Color(UIColor.systemBackground))
         .onAppear {
             updateLockoutTimer()
         }
@@ -129,51 +82,6 @@ struct PINEntryView: View {
                 updateLockoutTimer()
             }
         }
-    }
-
-    // MARK: - Number Pad
-
-    private var numberPad: some View {
-        VStack(spacing: 16) {
-            // Rows 1-3
-            ForEach(0..<3) { row in
-                HStack(spacing: 16) {
-                    ForEach(1..<4) { col in
-                        let number = row * 3 + col
-                        NumberPadButton(number: "\(number)") {
-                            addDigit("\(number)")
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity)
-            }
-
-            // Bottom row
-            HStack(spacing: 16) {
-                // Empty space
-                Rectangle()
-                    .fill(Color.clear)
-                    .frame(width: 80, height: 80)
-
-                // Zero
-                NumberPadButton(number: "0") {
-                    addDigit("0")
-                }
-
-                // Delete button
-                Button(action: deleteDigit) {
-                    Image(systemName: "delete.left")
-                        .font(.title2)
-                        .foregroundColor(.orange)
-                        .frame(width: 80, height: 80)
-                        .background(Color.gray.opacity(0.1))
-                        .clipShape(Circle())
-                }
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.horizontal, 32)
     }
 
     // MARK: - Biometric Button
@@ -195,22 +103,6 @@ struct PINEntryView: View {
             .clipShape(Capsule())
         }
         .disabled(isAuthenticating)
-    }
-
-    // MARK: - Error View
-
-    private var errorView: some View {
-        HStack {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundColor(.red)
-            Text(errorMessage)
-                .font(.caption)
-                .foregroundColor(.red)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(Color.red.opacity(0.1))
-        .clipShape(Capsule())
     }
 
     // MARK: - Lockout View
@@ -339,35 +231,6 @@ struct PINEntryView: View {
         let minutes = seconds / 60
         let remainingSeconds = seconds % 60
         return String(format: "%d:%02d", minutes, remainingSeconds)
-    }
-}
-
-// MARK: - Number Pad Button
-
-struct NumberPadButton: View {
-    let number: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(number)
-                .font(.title)
-                .fontWeight(.medium)
-                .foregroundColor(.primary)
-                .frame(width: 80, height: 80)
-                .background(Color.gray.opacity(0.1))
-                .clipShape(Circle())
-        }
-        .buttonStyle(NumberPadButtonStyle())
-    }
-}
-
-struct NumberPadButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-            .opacity(configuration.isPressed ? 0.7 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 
