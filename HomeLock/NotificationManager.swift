@@ -211,6 +211,26 @@ class NotificationManager: ObservableObject {
         }
     }
 
+    /// Tells the user a scheduled lock didn't start because of the free-tier limit.
+    func showScheduleLimitNotification(accessoryName: String) async {
+        await checkAuthorizationStatus()
+        guard isAuthorized else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "Scheduled lock not started")
+        content.body = String(localized: "\(accessoryName) wasn't locked: \(LockManagerError.lockLimitReached.localizedDescription)")
+        content.sound = .default
+        content.userInfo = ["type": "lock-limit"]
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(identifier: "lock-limit-\(UUID().uuidString)", content: content, trigger: trigger)
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+        } catch {
+            print("📱 [NotificationManager] Error showing lock-limit notification: \(error)")
+        }
+    }
+
     /// Tells the user a Release Lock / unlock from a notification failed in HomeKit.
     func showUnlockFailedNotification(message: String) async {
         // Fresh check: on a cold launch from a notification, isAuthorized is

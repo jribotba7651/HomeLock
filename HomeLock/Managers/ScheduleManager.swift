@@ -34,6 +34,9 @@ class ScheduleManager: ObservableObject {
     // schedule never takes ownership of that lock; this only avoids re-logging the
     // skip every minute for the same window.
     private var skippedWindows: [UUID: Date] = [:]
+    // Schedules skipped because of the free-tier limit: scheduleID -> window
+    // end, so the user is notified once per window.
+    private var limitNotifiedWindows: [UUID: Date] = [:]
     private static let activeScheduleLocksKey = "HomeLock_ActiveScheduleLocks"
 
     private init() {
@@ -238,6 +241,18 @@ class ScheduleManager: ObservableObject {
         case .lock:
             skippedWindows.removeValue(forKey: schedule.id)
         }
+
+        // Free-tier limit BEFORE any power write or trigger. Tell the user once
+        // per window instead of failing silently every minute.
+        guard lockManager.canAddLock else {
+            if limitNotifiedWindows[schedule.id] != windowEnd {
+                limitNotifiedWindows[schedule.id] = windowEnd
+                print("🚫 [ScheduleManager] Free-tier lock limit reached; skipping scheduled lock for \(schedule.accessoryName)")
+                await NotificationManager.shared.showScheduleLimitNotification(accessoryName: schedule.accessoryName)
+            }
+            return
+        }
+        limitNotifiedWindows.removeValue(forKey: schedule.id)
 
         // Find the accessory
         guard let accessory = homeKit.outlets.first(where: { $0.uniqueIdentifier == schedule.accessoryUUID }) else {

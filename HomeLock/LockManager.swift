@@ -70,6 +70,7 @@ enum LockManagerError: LocalizedError {
     case lutronNotSupported
     case alreadyLocked
     case unlockFailed(name: String, underlying: Error)
+    case lockLimitReached
 
     var errorDescription: String? {
         switch self {
@@ -77,6 +78,8 @@ enum LockManagerError: LocalizedError {
             return "Device not found."
         case .alreadyLocked:
             return "This device is already locked."
+        case .lockLimitReached:
+            return String(localized: "The free version can lock \(LockManager.freeLockLimit) devices at a time. Unlock a device or upgrade to HomeLock Pro to lock more.")
         case .unlockFailed(let name, let underlying):
             return "HomeKit couldn't remove the lock on \(name) (\(underlying.localizedDescription)). The lock is still active. Make sure the device and its bridge are reachable, then try again."
         case .lutronNotSupported:
@@ -509,6 +512,10 @@ class LockManager: ObservableObject {
             throw LockManagerError.alreadyLocked
         }
 
+        // Free-tier limit BEFORE any power write or trigger: a trigger created
+        // past the limit enforced with no local lock, timer or notification.
+        try Self.checkLockLimit(isPro: StoreManager.shared.isPro, activeLocks: locks.count)
+
         // Compute expiresAt BEFORE creating trigger so it gets embedded in the trigger name
         let expiresAt = duration.map { Date().addingTimeInterval($0) }
 
@@ -546,10 +553,12 @@ class LockManager: ObservableObject {
         duration: TimeInterval?,
         expiresAt explicitExpiresAt: Date? = nil
     ) {
-        // Enforce device limit for free users
-        guard canAddLock || isLocked(accessoryID) else {
-            print("🚫 [LockManager] Device limit reached for free tier")
-            return
+        // Every caller checks the free-tier limit before creating the trigger
+        // (checkLockLimit / canAddLock). The trigger exists by now, so a lock
+        // is never dropped here: dropping it left the device enforced by
+        // HomeKit with no expiry timer or notification.
+        if !canAddLock && !isLocked(accessoryID) {
+            print("⚠️ [LockManager] Lock added over the free-tier limit (caller didn't check first)")
         }
 
         // An explicit expiration (e.g. end of a schedule window, or the timestamp
@@ -705,12 +714,25 @@ class LockManager: ObservableObject {
         return !config.isExpired
     }
 
+    /// Devices a free user can have locked at the same time.
+    nonisolated static let freeLockLimit = 2
+
+    /// Pure free-tier rule: Pro is unlimited; free allows `freeLockLimit` locks.
+    nonisolated static func allowsNewLock(isPro: Bool, activeLocks: Int) -> Bool {
+        isPro || activeLocks < freeLockLimit
+    }
+
+    /// Throws `lockLimitReached` when a new lock is over the free-tier limit.
+    /// Call it before writing power or creating the HomeKit trigger.
+    nonisolated static func checkLockLimit(isPro: Bool, activeLocks: Int) throws {
+        guard allowsNewLock(isPro: isPro, activeLocks: activeLocks) else {
+            throw LockManagerError.lockLimitReached
+        }
+    }
+
     /// Indica si el usuario puede agregar más locks basándose en su suscripción
     var canAddLock: Bool {
-        if StoreManager.shared.isPro {
-            return true
-        }
-        return locks.count < 2
+        Self.allowsNewLock(isPro: StoreManager.shared.isPro, activeLocks: locks.count)
     }
 
     /// Obtiene la configuración de lock para un accesorio

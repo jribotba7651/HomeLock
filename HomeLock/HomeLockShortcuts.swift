@@ -67,6 +67,8 @@ struct LockDeviceIntent: AppIntent {
             return .result(dialog: "Locked \(device.name) for \(durationMinutes) minutes")
         } catch LockManagerError.alreadyLocked {
             return .result(dialog: "\(device.name) is already locked")
+        } catch LockManagerError.lockLimitReached {
+            return .result(dialog: "\(LockManagerError.lockLimitReached.localizedDescription)")
         } catch {
             throw IntentError.operationFailed(error.localizedDescription)
         }
