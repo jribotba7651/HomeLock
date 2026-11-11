@@ -345,7 +345,10 @@ struct DeviceDetailView: View {
 
         } catch {
             await MainActor.run {
-                errorMessage = String(localized: "Could not lock the device: \(error.localizedDescription)")
+                errorMessage = ErrorCodeTag.message(
+                    String(localized: "Could not lock the device: \(error.localizedDescription)"),
+                    for: error
+                )
                 showingError = true
             }
             print("DeviceDetailView: Error locking: \(error)")
@@ -357,7 +360,7 @@ struct DeviceDetailView: View {
             try await lockManager.unlockDevice(accessoryID: accessory.uniqueIdentifier)
             print("DeviceDetailView: Lock deactivated successfully")
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = ErrorCodeTag.message(error.localizedDescription, for: error)
             showingError = true
             print("DeviceDetailView: Error unlocking: \(error)")
         }

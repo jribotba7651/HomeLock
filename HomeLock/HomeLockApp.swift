@@ -175,7 +175,9 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         do {
             try await LockManager.shared.unlockDevice(accessoryID: accessoryID)
         } catch {
-            await NotificationManager.shared.showUnlockFailedNotification(message: error.localizedDescription)
+            await NotificationManager.shared.showUnlockFailedNotification(
+                message: ErrorCodeTag.message(error.localizedDescription, for: error)
+            )
         }
     }
 }

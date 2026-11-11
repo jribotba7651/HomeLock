@@ -37,11 +37,39 @@ struct LockConfiguration: Codable, Identifiable {
     }
 }
 
+/// Short code tag for error alerts, e.g. "(HMError 74)" or
+/// "(HMError 74; underlying HMError 14)", so device failures can be identified
+/// from TestFlight. nil when no HomeKit error is involved.
+enum ErrorCodeTag {
+    nonisolated static func tag(for error: Error) -> String? {
+        var error = error
+        if case LockManagerError.unlockFailed(_, let underlying) = error { error = underlying }
+        let ns = error as NSError
+        let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError
+        guard ns.domain == HMErrorDomain || underlying?.domain == HMErrorDomain else { return nil }
+        var text = "\(shortDomain(ns.domain)) \(ns.code)"
+        if let underlying {
+            text += "; underlying \(shortDomain(underlying.domain)) \(underlying.code)"
+        }
+        return "(\(text))"
+    }
+
+    /// Message with the code tag appended on its own line (unchanged if no tag).
+    nonisolated static func message(_ message: String, for error: Error) -> String {
+        guard let tag = tag(for: error) else { return message }
+        return "\(message)\n\n\(tag)"
+    }
+
+    private nonisolated static func shortDomain(_ domain: String) -> String {
+        domain == HMErrorDomain ? "HMError" : domain
+    }
+}
+
 enum LockManagerError: LocalizedError {
     case accessoryNotFound
     case lutronNotSupported
     case alreadyLocked
-    case unlockFailed(name: String, reason: String)
+    case unlockFailed(name: String, underlying: Error)
 
     var errorDescription: String? {
         switch self {
@@ -49,8 +77,8 @@ enum LockManagerError: LocalizedError {
             return "Device not found."
         case .alreadyLocked:
             return "This device is already locked."
-        case .unlockFailed(let name, let reason):
-            return "HomeKit couldn't remove the lock on \(name) (\(reason)). The lock is still active. Make sure the device and its bridge are reachable, then try again."
+        case .unlockFailed(let name, let underlying):
+            return "HomeKit couldn't remove the lock on \(name) (\(underlying.localizedDescription)). The lock is still active. Make sure the device and its bridge are reachable, then try again."
         case .lutronNotSupported:
             return "Lutron devices are currently disabled in HomeLock because their HomeKit bridge loses connection too often, making locks unreliable. You can re-enable them from Settings → HomeKit if you're willing to accept this limitation."
         }
@@ -585,7 +613,7 @@ class LockManager: ObservableObject {
                 // No reachable home holds a trigger for it; nothing left to remove.
             } catch {
                 print("❌ [LockManager] Unlock failed for \(config.accessoryName): \(error)")
-                throw LockManagerError.unlockFailed(name: config.accessoryName, reason: error.localizedDescription)
+                throw LockManagerError.unlockFailed(name: config.accessoryName, underlying: error)
             }
         }
 
