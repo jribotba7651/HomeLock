@@ -1037,7 +1037,26 @@ class LockManager: ObservableObject {
         scheduleNextBackgroundTaskIfNeeded()
     }
 
+    private var isCleaningTriggers = false
+
+    /// Daily-repeat safeguard for time-of-day locks: a trigger left behind after
+    /// its lock expired would enforce again the next day in the same window.
+    /// Clears expired local locks, then removes expired or orphaned HomeLock
+    /// triggers and their action sets. Called at launch, every time the app
+    /// becomes active, when an expiry notification is handled and on Release Lock.
+    func cleanupExpiredTriggers() async {
+        let homeKit = HomeKitService.shared
+        await homeKit.waitServiceReady()
+        // Never judge triggers against a HomeKit that hasn't loaded.
+        guard homeKit.isAuthorized, !homeKit.homes.isEmpty else { return }
+        await checkAndCleanExpiredLocks()
+        await cleanupOrphanedTriggers()
+    }
+
     private func cleanupOrphanedTriggers() async {
+        guard !isCleaningTriggers else { return }
+        isCleaningTriggers = true
+        defer { isCleaningTriggers = false }
         let homeKit = HomeKitService.shared
         print("🧹 [LockManager] Iniciando limpieza de triggers huérfanos...")
 

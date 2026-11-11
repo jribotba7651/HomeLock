@@ -75,6 +75,9 @@ struct HomeLockApp: App {
                     // Wait for HomeKit to be ready before syncing
                     await HomeKitService.shared.waitServiceReady()
                     await LockManager.shared.syncFromHomeKit()
+                    // Daily-repeat safeguard: remove expired triggers on every
+                    // launch and every return to the foreground.
+                    await LockManager.shared.cleanupExpiredTriggers()
                     // Reconcile schedules on foreground
                     ScheduleManager.shared.checkSchedules()
                 }
@@ -156,6 +159,7 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
                 // On a cold launch from the notification, HomeKit homes load asynchronously.
                 await HomeKitService.shared.waitServiceReady()
                 await Self.releaseLock(accessoryID, statusName: statusName)
+                await LockManager.shared.cleanupExpiredTriggers()
 
             case "KEEP_LOCKED":
                 print("📱 [NotificationDelegate] User chose to keep lock for accessory \(accessoryID)")
@@ -166,6 +170,7 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
                 print("📱 [NotificationDelegate] User tapped notification for accessory \(accessoryID)")
                 await HomeKitService.shared.waitServiceReady()
                 await Self.releaseLock(accessoryID)
+                await LockManager.shared.cleanupExpiredTriggers()
 
             default:
                 print("📱 [NotificationDelegate] Unknown action identifier: \(response.actionIdentifier)")
@@ -180,6 +185,12 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        // Expiry notification while the app is open: remove the expired trigger now.
+        if notification.request.content.userInfo["type"] as? String == "lock-expiration" {
+            Task { @MainActor in
+                await LockManager.shared.cleanupExpiredTriggers()
+            }
+        }
         completionHandler([.banner, .list, .sound, .badge])
     }
 

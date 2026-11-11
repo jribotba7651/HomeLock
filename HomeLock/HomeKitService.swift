@@ -378,8 +378,13 @@ class HomeKitService: NSObject, ObservableObject {
     ///              the lock ends only when the app removes the trigger.
     /// - timeOfDay: Home-app-style time window (hour/minute only) from the lock
     ///              start to its end. The window repeats daily, so the app must
-    ///              still remove the trigger later; locks of 24 h or more fall
-    ///              back to appOnly.
+    ///              still remove the trigger later (LockManager removes expired
+    ///              triggers at launch, on becoming active, on Release Lock and
+    ///              when the expiry notification is handled). HomeKit rejects
+    ///              year/month/day in these conditions ("Invalid parameter"), so
+    ///              the window can't be pinned to one date. Windows that can't be
+    ///              expressed (24 h or more, or start and end in the same
+    ///              minute) fall back to appOnly + the expiry notification.
     /// - fullDate:  occurringBefore with year…minute (build 5). Device test of
     ///              build 5 showed the trigger was not enforced at all.
     enum LockEndMode: String, CaseIterable, Identifiable {
@@ -431,6 +436,9 @@ class HomeKitService: NSObject, ObservableObject {
             let before = HMEventTrigger.predicateForEvaluatingTrigger(occurringBefore: close)
             let openMinutes = open.hour! * 60 + open.minute!
             let closeMinutes = close.hour! * 60 + close.minute!
+            // Same opening and closing minute (a lock just under 24 h): the
+            // window would be "always" or "never". Fall back to no condition.
+            guard closeMinutes != openMinutes else { return nil }
             if closeMinutes > openMinutes {
                 return NSCompoundPredicate(andPredicateWithSubpredicates: [after, before])
             }
