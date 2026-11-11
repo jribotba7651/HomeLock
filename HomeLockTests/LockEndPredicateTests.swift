@@ -108,7 +108,7 @@ struct LockEndPredicateTests {
         }
     }
 
-    @Test(arguments: [(9, 0, 9, 10), (21, 0, 22, 30), (23, 30, 0, 15), (23, 59, 0, 1), (0, 0, 7, 0), (12, 0, 11, 59)])
+    @Test(arguments: [(9, 0, 9, 10), (21, 0, 22, 30), (23, 30, 0, 15), (23, 59, 0, 1), (0, 0, 7, 0), (12, 0, 11, 50)])
     func everyTimeOfDayPredicateIsAcceptedByHomeKit(_ window: (Int, Int, Int, Int)) throws {
         let start = date(2026, 11, 10, window.0, window.1)
         var end = date(2026, 11, 10, window.2, window.3)
@@ -123,9 +123,72 @@ struct LockEndPredicateTests {
         #expect(trigger.predicate == nil)
     }
 
-    @Test func defaultModeIsAppOnly() {
+    // MARK: - Build 13: build 7's time-of-day end condition is the default again
+
+    @Test func defaultModeIsTimeOfDay() {
+        #expect(HomeKitService.defaultLockEndMode == .timeOfDay)
         UserDefaults.standard.removeObject(forKey: HomeKitService.lockEndModeKey)
-        #expect(HomeKitService.lockEndMode == .appOnly)
+        #expect(HomeKitService.lockEndMode == .timeOfDay)
+    }
+
+    @Test func timedLockGetsAnEndConditionByDefault() {
+        let p = HomeKitService.lockEndPredicate(start: date(2026, 11, 10, 21, 0), end: date(2026, 11, 10, 21, 30),
+                                                mode: HomeKitService.defaultLockEndMode, calendar: calendar)
+        #expect(p != nil)
+    }
+
+    @Test func timeOfDayWindowMatchesBuild7() throws {
+        // Opens one minute before the start, closes at the end rounded up.
+        let p = try #require(HomeKitService.lockEndPredicate(start: date(2026, 11, 10, 21, 0, 20), end: date(2026, 11, 10, 21, 30, 20), mode: .timeOfDay, calendar: calendar))
+        let compound = try #require(p as? NSCompoundPredicate)
+        #expect(compound.compoundPredicateType == .and)
+        let after = HMEventTrigger.predicateForEvaluatingTrigger(occurringAfter: DateComponents(hour: 20, minute: 59))
+        let before = HMEventTrigger.predicateForEvaluatingTrigger(occurringBefore: DateComponents(hour: 21, minute: 31))
+        // predicateFormat embeds object addresses; compare without them.
+        func stripped(_ f: String) -> String { f.replacingOccurrences(of: "0x[0-9a-f]+", with: "", options: .regularExpression) }
+        #expect(stripped(p.predicateFormat) == stripped(NSCompoundPredicate(andPredicateWithSubpredicates: [after, before]).predicateFormat))
+    }
+
+    // MARK: - Daily-repeat safeguard
+
+    @Test func timeOfDayNeverPinsADate() throws {
+        for (start, end) in [(date(2026, 11, 10, 21, 0), date(2026, 11, 10, 22, 0)),
+                             (date(2026, 11, 10, 23, 30), date(2026, 11, 11, 1, 0))] {
+            let p = try #require(HomeKitService.lockEndPredicate(start: start, end: end, mode: .timeOfDay, calendar: calendar))
+            #expect(!p.predicateFormat.contains("year"))
+            #expect(!p.predicateFormat.contains("day"))
+        }
+    }
+
+    @Test func homeKitRejectsADatedEndInTheWindow() {
+        // Why the window can't be pinned to one date (item 2a).
+        let after = HMEventTrigger.predicateForEvaluatingTrigger(occurringAfter: DateComponents(hour: 21, minute: 0))
+        let datedBefore = HMEventTrigger.predicateForEvaluatingTrigger(occurringBefore: DateComponents(year: 2026, month: 11, day: 12, hour: 22, minute: 30))
+        let window = NSCompoundPredicate(andPredicateWithSubpredicates: [after, datedBefore])
+        #expect(throws: HomeKitError.self) {
+            _ = try HomeKitService.makeLockTrigger(name: "test", events: [probeEvent], predicate: window)
+        }
+    }
+
+    @Test func lockJustUnder24HoursAcrossMidnightIsAnOr() throws {
+        let p = try #require(HomeKitService.lockEndPredicate(start: date(2026, 11, 10, 10, 0), end: date(2026, 11, 11, 9, 50), mode: .timeOfDay, calendar: calendar))
+        #expect((p as? NSCompoundPredicate)?.compoundPredicateType == .or)
+    }
+
+    @Test func windowOpeningAndClosingOnTheSameMinuteFallsBack() {
+        // 10:00:30 -> opens 09:59; ends next day 09:58:40 -> closes 09:59.
+        let p = HomeKitService.lockEndPredicate(start: date(2026, 11, 10, 10, 0, 30), end: date(2026, 11, 11, 9, 58, 40), mode: .timeOfDay, calendar: calendar)
+        #expect(p == nil)
+    }
+
+    @Test func multiDayLockFallsBackToNoCondition() {
+        let p = HomeKitService.lockEndPredicate(start: date(2026, 11, 10, 21, 0), end: date(2026, 11, 13, 8, 0), mode: .timeOfDay, calendar: calendar)
+        #expect(p == nil)
+    }
+
+    @Test func endAtOrBeforeStartHasNoCondition() {
+        let p = HomeKitService.lockEndPredicate(start: date(2026, 11, 10, 21, 0), end: date(2026, 11, 10, 21, 0), mode: .timeOfDay, calendar: calendar)
+        #expect(p == nil)
     }
 
     @Test func predicateBuildsFromComponents() {
