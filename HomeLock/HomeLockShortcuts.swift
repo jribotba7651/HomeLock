@@ -1,6 +1,7 @@
 import AppIntents
 import HomeKit
 import Foundation
+import UIKit
 
 struct HomeLockDeviceEntity: AppEntity {
     static var typeDisplayRepresentation: TypeDisplayRepresentation = "Device"
@@ -37,9 +38,27 @@ struct HomeLockDeviceQuery: EntityQuery {
     }
 }
 
+/// HomeKit only serves an iOS app in the foreground: called from an app
+/// launched in the background by Shortcuts/Siri it fails with HMError 80
+/// "Missing entitlement for API" (there is no background HomeKit entitlement
+/// for iOS apps). Intents that write to HomeKit therefore open HomeLock.
+enum HomeKitIntentMode {
+    static let modes: IntentModes = .foreground(.immediate)
+
+    /// Waits up to ~5 s for the app to become active before using HomeKit.
+    @MainActor
+    static func waitUntilActive() async {
+        for _ in 0..<20 where UIApplication.shared.applicationState != .active {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
+}
+
 struct LockDeviceIntent: AppIntent {
     static var title: LocalizedStringResource = "Lock Device"
     static var description = IntentDescription("Temporarily lock a smart home device with HomeLock")
+    // Runs in the app, in the foreground: HomeKit refuses background callers.
+    static var supportedModes: IntentModes { HomeKitIntentMode.modes }
     
     @Parameter(title: "Device")
     var device: HomeLockDeviceEntity
@@ -58,6 +77,9 @@ struct LockDeviceIntent: AppIntent {
         }
 
         // Lutron policy ("Ignore Lutron devices") is enforced in LockManager.lockDevice.
+        // Same path as the app: limit check, trigger with the time-of-day end,
+        // expiry notification.
+        await HomeKitIntentMode.waitUntilActive()
         do {
             try await LockManager.shared.lockDevice(
                 accessoryID: accessoryID,
@@ -78,6 +100,7 @@ struct LockDeviceIntent: AppIntent {
 struct UnlockDeviceIntent: AppIntent {
     static var title: LocalizedStringResource = "Unlock Device"
     static var description = IntentDescription("Remove lock from a smart home device")
+    static var supportedModes: IntentModes { HomeKitIntentMode.modes }
 
     @Parameter(title: "Device")
     var device: HomeLockDeviceEntity
@@ -105,6 +128,7 @@ struct UnlockDeviceIntent: AppIntent {
             throw IntentError.authenticationRequired
         }
 
+        await HomeKitIntentMode.waitUntilActive()
         do {
             try await LockManager.shared.unlockDevice(accessoryID: accessoryID)
         } catch {
