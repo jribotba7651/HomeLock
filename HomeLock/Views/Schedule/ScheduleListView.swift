@@ -30,7 +30,7 @@ struct ScheduleListView: View {
                     ContentUnavailableView(
                         "No Schedules",
                         systemImage: "calendar.badge.clock",
-                        description: Text("Create schedules to automatically lock devices at specific times")
+                        description: Text("Create schedules to lock devices at set times. A schedule starts its lock only while HomeLock is open.")
                     )
                 } else {
                     List {
@@ -59,10 +59,15 @@ struct ScheduleListView: View {
                             }
                         }
 
-                        ForEach(schedules) { schedule in
-                            ScheduleRow(schedule: schedule)
+                        Section {
+                            ForEach(schedules) { schedule in
+                                ScheduleRow(schedule: schedule)
+                            }
+                            .onDelete(perform: deleteSchedules)
+                        } footer: {
+                            // Schedules are checked by an in-app timer (ScheduleManager).
+                            Text("Schedules start their lock only while HomeLock is open. Once started, HomeKit keeps the device locked even if you close the app.")
                         }
-                        .onDelete(perform: deleteSchedules)
                     }
                     .listStyle(.insetGrouped)
                 }

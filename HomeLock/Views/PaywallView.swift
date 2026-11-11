@@ -20,7 +20,7 @@ struct PaywallView: View {
     /// - History:   HistoryView.freeHistoryDays (free tier: last 7 days)
     private let features: [(icon: String, text: String)] = [
         ("lock.fill", "Lock any number of devices at once"),
-        ("calendar.badge.clock", "Unlimited schedules"),
+        ("calendar.badge.clock", "Unlimited schedules (they start while HomeLock is open)"),
         ("clock.arrow.circlepath", "Full lock history, not just the last 7 days"),
     ]
 
