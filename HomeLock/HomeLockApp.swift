@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 import SwiftData
 import BackgroundTasks
 import UserNotifications
@@ -168,12 +169,18 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         completionHandler([.banner, .list, .sound, .badge])
     }
 
-    /// Release Lock from a notification. If HomeKit fails, the lock stays and the
-    /// user gets a notification explaining why instead of a silent failure.
+    /// Release Lock from a notification. Always frees the device locally (as in
+    /// build 7); if HomeKit fails to remove the trigger, the user gets a
+    /// notification with the error code instead of a silent failure.
     @MainActor
     static func releaseLock(_ accessoryID: UUID) async {
+        // The action opens the app (.foreground); HomeKit calls made before the
+        // app is active can fail, so wait briefly for it to become active.
+        for _ in 0..<20 where UIApplication.shared.applicationState != .active {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
         do {
-            try await LockManager.shared.unlockDevice(accessoryID: accessoryID)
+            try await LockManager.shared.unlockDevice(accessoryID: accessoryID, source: .notification)
         } catch {
             await NotificationManager.shared.showUnlockFailedNotification(
                 message: ErrorCodeTag.message(error.localizedDescription, for: error)

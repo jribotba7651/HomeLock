@@ -199,6 +199,9 @@ class NotificationManager: ObservableObject {
 
     /// Tells the user a Release Lock / unlock from a notification failed in HomeKit.
     func showUnlockFailedNotification(message: String) async {
+        // Fresh check: on a cold launch from a notification, isAuthorized is
+        // still false until requestPermission finishes, which dropped this alert.
+        await checkAuthorizationStatus()
         guard isAuthorized else { return }
 
         let content = UNMutableNotificationContent()

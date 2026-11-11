@@ -593,11 +593,30 @@ class LockManager: ObservableObject {
         print("🔒 [LockManager] Lock agregado para \(accessoryName), expira: \(expiresAt?.description ?? "nunca")")
     }
 
+    /// Where an unlock was started from.
+    enum UnlockSource {
+        /// Unlock button / Unlock Device intent: the user can see the result and retry.
+        case inApp
+        /// "Release Lock" notification action: must always free the device, as
+        /// in build 7. Never leaves the lock in place on a HomeKit error.
+        case notification
+    }
+
+    /// Pure rule: keep the local lock when HomeKit fails to remove the trigger?
+    /// Only for in-app unlocks (the user sees the error and can retry). A
+    /// notification release always clears it, like build 7's removeLock did;
+    /// keeping it there left the device locked until the app was opened again.
+    nonisolated static func keepsLocalLockOnFailure(_ source: UnlockSource) -> Bool {
+        source == .inApp
+    }
+
     /// User-initiated unlock (Unlock button, Unlock Device intent, Release Lock).
-    /// Removes the HomeKit trigger first; if HomeKit fails, the local lock is kept
-    /// (the trigger would keep enforcing anyway) and `unlockFailed` is thrown so
-    /// the caller can show it. "Already removed" counts as success.
-    func unlockDevice(accessoryID: UUID) async throws {
+    /// Tries the trigger UUID, then every HomeLock trigger for the accessory (a
+    /// failure of the first attempt does not stop the second). If the final
+    /// removal fails: in-app keeps the lock and throws `unlockFailed`; a
+    /// notification release still clears the lock and then throws so the
+    /// caller can post the failure notification. "Already removed" is success.
+    func unlockDevice(accessoryID: UUID, source: UnlockSource = .inApp) async throws {
         guard let config = locks[accessoryID] else { return }
         isUserOperating = true
         defer { isUserOperating = false }
@@ -605,16 +624,28 @@ class LockManager: ObservableObject {
         let homeKit = HomeKitService.shared
         await homeKit.waitServiceReady()
 
+        var failure: Error?
         if let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
             do {
                 try await homeKit.removeLockTrigger(triggerID: config.triggerID, for: accessory)
+            } catch {
+                print("⚠️ [LockManager] Removing trigger by ID failed for \(config.accessoryName): \(error); trying by accessory")
+            }
+            do {
                 try await homeKit.removeLockTrigger(for: accessory)
             } catch HomeKitError.homeNotFound {
                 // No reachable home holds a trigger for it; nothing left to remove.
             } catch {
-                print("❌ [LockManager] Unlock failed for \(config.accessoryName): \(error)")
-                throw LockManagerError.unlockFailed(name: config.accessoryName, underlying: error)
+                failure = error
             }
+        }
+
+        if let failure {
+            print("❌ [LockManager] Unlock failed for \(config.accessoryName): \(failure)")
+            if !Self.keepsLocalLockOnFailure(source) {
+                await removeLock(for: accessoryID)
+            }
+            throw LockManagerError.unlockFailed(name: config.accessoryName, underlying: failure)
         }
 
         await removeLock(for: accessoryID)
