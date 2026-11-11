@@ -68,7 +68,7 @@ struct LockDeviceIntent: AppIntent {
         } catch LockManagerError.alreadyLocked {
             return .result(dialog: "\(device.name) is already locked")
         } catch {
-            throw IntentError.lockFailed(device.name)
+            throw IntentError.operationFailed(error.localizedDescription)
         }
     }
 }
@@ -103,7 +103,11 @@ struct UnlockDeviceIntent: AppIntent {
             throw IntentError.authenticationRequired
         }
 
-        await LockManager.shared.removeLock(for: accessoryID)
+        do {
+            try await LockManager.shared.unlockDevice(accessoryID: accessoryID)
+        } catch {
+            throw IntentError.operationFailed(error.localizedDescription)
+        }
         return .result(dialog: "Unlocked \(device.name)")
     }
 }
@@ -171,6 +175,7 @@ struct HomeLockShortcuts: AppShortcutsProvider {
 
 enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
     case lockFailed(String)
+    case operationFailed(String)
     case invalidDevice
     case authenticationRequired
 
@@ -178,6 +183,8 @@ enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
         switch self {
         case .lockFailed(let name):
             return "Failed to lock \(name)"
+        case .operationFailed(let reason):
+            return "\(reason)"
         case .invalidDevice:
             return "Invalid device selected"
         case .authenticationRequired:

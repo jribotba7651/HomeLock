@@ -140,7 +140,7 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
                 print("📱 [NotificationDelegate] User chose to release lock for accessory \(accessoryID)")
                 // On a cold launch from the notification, HomeKit homes load asynchronously.
                 await HomeKitService.shared.waitServiceReady()
-                await LockManager.shared.removeLock(for: accessoryID)
+                await Self.releaseLock(accessoryID)
 
             case "KEEP_LOCKED":
                 print("📱 [NotificationDelegate] User chose to keep lock for accessory \(accessoryID)")
@@ -150,7 +150,7 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
                 // User tapped the notification (not a button)
                 print("📱 [NotificationDelegate] User tapped notification for accessory \(accessoryID)")
                 await HomeKitService.shared.waitServiceReady()
-                await LockManager.shared.removeLock(for: accessoryID)
+                await Self.releaseLock(accessoryID)
 
             default:
                 print("📱 [NotificationDelegate] Unknown action identifier: \(response.actionIdentifier)")
@@ -166,6 +166,17 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .list, .sound, .badge])
+    }
+
+    /// Release Lock from a notification. If HomeKit fails, the lock stays and the
+    /// user gets a notification explaining why instead of a silent failure.
+    @MainActor
+    static func releaseLock(_ accessoryID: UUID) async {
+        do {
+            try await LockManager.shared.unlockDevice(accessoryID: accessoryID)
+        } catch {
+            await NotificationManager.shared.showUnlockFailedNotification(message: error.localizedDescription)
+        }
     }
 }
 

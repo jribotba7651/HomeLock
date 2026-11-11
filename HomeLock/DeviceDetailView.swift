@@ -123,9 +123,7 @@ struct DeviceDetailView: View {
                         lockToState: config.lockedState,
                         lockEndTime: config.expiresAt,
                         onUnlock: {
-                            Task {
-                                await unlockDevice()
-                            }
+                            await unlockDevice()
                         }
                     )
                 } else {
@@ -315,9 +313,12 @@ struct DeviceDetailView: View {
             if isLutron {
                 // Serialize through the bridge gatekeeper to avoid saturating the
                 // Caséta Smart Hub's Clear Connect radio with parallel writes.
-                triggerID = try await LutronBridgeGatekeeper.shared.run(for: accessory) {
-                    try await homeKit.setAccessoryPower(accessory, on: lockToState)
-                    return try await homeKit.createLockTrigger(for: accessory, lockedState: lockToState, expiresAt: expiresAt)
+                // Verified write so a Lutron device that doesn't switch is reported
+                // (same alert as other devices) instead of failing silently.
+                (reportedState, triggerID) = try await LutronBridgeGatekeeper.shared.run(for: accessory) {
+                    let state = try await homeKit.setAccessoryPowerVerified(accessory, on: lockToState)
+                    let id = try await homeKit.createLockTrigger(for: accessory, lockedState: lockToState, expiresAt: expiresAt)
+                    return (state, id)
                 }
             } else {
                 reportedState = try await homeKit.setAccessoryPowerVerified(accessory, on: lockToState)
@@ -352,8 +353,14 @@ struct DeviceDetailView: View {
     }
 
     private func unlockDevice() async {
-        await lockManager.removeLock(for: accessory.uniqueIdentifier)
-        print("DeviceDetailView: Lock deactivated successfully")
+        do {
+            try await lockManager.unlockDevice(accessoryID: accessory.uniqueIdentifier)
+            print("DeviceDetailView: Lock deactivated successfully")
+        } catch {
+            errorMessage = error.localizedDescription
+            showingError = true
+            print("DeviceDetailView: Error unlocking: \(error)")
+        }
     }
 }
 
@@ -361,7 +368,7 @@ struct DeviceDetailView: View {
 struct LockedStatusView: View {
     let lockToState: Bool
     let lockEndTime: Date?
-    let onUnlock: () -> Void
+    let onUnlock: () async -> Void
 
     @State private var timeRemaining: String = ""
     @State private var timer: Timer?
@@ -406,7 +413,11 @@ struct LockedStatusView: View {
 
             Button(role: .destructive) {
                 isUnlocking = true
-                onUnlock()
+                Task {
+                    await onUnlock()
+                    // Reset so the user can retry if the unlock failed.
+                    isUnlocking = false
+                }
             } label: {
                 HStack {
                     Spacer()

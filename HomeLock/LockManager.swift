@@ -41,6 +41,7 @@ enum LockManagerError: LocalizedError {
     case accessoryNotFound
     case lutronNotSupported
     case alreadyLocked
+    case unlockFailed(name: String, reason: String)
 
     var errorDescription: String? {
         switch self {
@@ -48,6 +49,8 @@ enum LockManagerError: LocalizedError {
             return "Device not found."
         case .alreadyLocked:
             return "This device is already locked."
+        case .unlockFailed(let name, let reason):
+            return "HomeKit couldn't remove the lock on \(name) (\(reason)). The lock is still active. Make sure the device and its bridge are reachable, then try again."
         case .lutronNotSupported:
             return "Lutron devices are currently disabled in HomeLock because their HomeKit bridge loses connection too often, making locks unreliable. You can re-enable them from Settings → HomeKit if you're willing to accept this limitation."
         }
@@ -555,6 +558,33 @@ class LockManager: ObservableObject {
         logEvent(.locked, accessoryUUID: accessoryID, accessoryName: accessoryName, duration: duration)
 
         print("🔒 [LockManager] Lock agregado para \(accessoryName), expira: \(expiresAt?.description ?? "nunca")")
+    }
+
+    /// User-initiated unlock (Unlock button, Unlock Device intent, Release Lock).
+    /// Removes the HomeKit trigger first; if HomeKit fails, the local lock is kept
+    /// (the trigger would keep enforcing anyway) and `unlockFailed` is thrown so
+    /// the caller can show it. "Already removed" counts as success.
+    func unlockDevice(accessoryID: UUID) async throws {
+        guard let config = locks[accessoryID] else { return }
+        isUserOperating = true
+        defer { isUserOperating = false }
+
+        let homeKit = HomeKitService.shared
+        await homeKit.waitServiceReady()
+
+        if let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
+            do {
+                try await homeKit.removeLockTrigger(triggerID: config.triggerID, for: accessory)
+                try await homeKit.removeLockTrigger(for: accessory)
+            } catch HomeKitError.homeNotFound {
+                // No reachable home holds a trigger for it; nothing left to remove.
+            } catch {
+                print("❌ [LockManager] Unlock failed for \(config.accessoryName): \(error)")
+                throw LockManagerError.unlockFailed(name: config.accessoryName, reason: error.localizedDescription)
+            }
+        }
+
+        await removeLock(for: accessoryID)
     }
 
     /// Elimina un lock. Idempotent: if another device already removed the trigger,

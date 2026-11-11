@@ -819,8 +819,11 @@ class HomeKitService: NSObject, ObservableObject {
         do {
             try await removeHomeLockTrigger(trigger, in: home)
         } catch {
-            // Unexpected: network, permissions, etc. — log visibly but don't crash
+            // Unexpected (network, bridge unreachable, permissions). "Not found" is
+            // already treated as success; rethrow so user-initiated unlocks can
+            // report it. Background callers use try? and are unaffected.
             print("⚠️ [HomeLock] WARNING: Trigger removal failed with unexpected error: \(error.localizedDescription) (code: \((error as NSError).code))")
+            throw error
         }
     }
 
@@ -842,13 +845,17 @@ class HomeKitService: NSObject, ObservableObject {
         }
         guard !matchingTriggers.isEmpty else { return }
 
+        var firstError: Error?
         for trigger in matchingTriggers {
             do {
                 try await removeHomeLockTrigger(trigger, in: home)
             } catch {
                 print("⚠️ [HomeLock] WARNING: Trigger removal failed with unexpected error: \(error.localizedDescription) (code: \((error as NSError).code))")
+                if firstError == nil { firstError = error }
             }
         }
+        // Keep removing the rest, then report the first failure.
+        if let firstError { throw firstError }
     }
 
     /// Elimina TODAS las automatizaciones de HomeLock (triggers y action sets que empiezan con "HomeLock_")

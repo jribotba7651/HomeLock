@@ -196,4 +196,23 @@ class NotificationManager: ObservableObject {
             print("📱 [NotificationManager] Error showing tamper notification: \(error)")
         }
     }
+
+    /// Tells the user a Release Lock / unlock from a notification failed in HomeKit.
+    func showUnlockFailedNotification(message: String) async {
+        guard isAuthorized else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "Couldn't release lock")
+        content.body = message
+        content.sound = .default
+        content.userInfo = ["type": "unlock-failed"]
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(identifier: "unlock-failed-\(UUID().uuidString)", content: content, trigger: trigger)
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+        } catch {
+            print("📱 [NotificationManager] Error showing unlock-failed notification: \(error)")
+        }
+    }
 }
