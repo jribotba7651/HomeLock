@@ -362,9 +362,12 @@ class HomeKitService: NSObject, ObservableObject {
 
     nonisolated static let lockEndModeKey = "lockEndMode"
 
-    /// Default stays appOnly until a device test confirms a hub-side end works.
+    /// v1 ships with appOnly: the time-of-day condition is rejected on iOS 27.3.
+    /// Release builds always use appOnly, ignoring any mode left over from a
+    /// TestFlight build; only DEBUG builds can pick another mode.
     nonisolated static var lockEndMode: LockEndMode {
-        UserDefaults.standard.string(forKey: lockEndModeKey).flatMap(LockEndMode.init) ?? .appOnly
+        guard AppEnvironment.showsDiagnostics else { return .appOnly }
+        return UserDefaults.standard.string(forKey: lockEndModeKey).flatMap(LockEndMode.init) ?? .appOnly
     }
 
     /// End condition for a lock trigger, or nil for "no condition".

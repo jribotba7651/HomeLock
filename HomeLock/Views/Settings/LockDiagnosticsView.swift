@@ -2,7 +2,7 @@
 //  LockDiagnosticsView.swift
 //  HomeLock
 //
-//  TestFlight / DEBUG only. Picks how timed locks end on the hub and shows
+//  DEBUG builds only. Picks how timed locks end on the hub and shows
 //  what HomeKit actually saved for every HomeLock trigger, so lock behavior
 //  can be checked on a real device and home hub.
 //
@@ -12,12 +12,14 @@ import HomeKit
 import UIKit
 
 enum AppEnvironment {
-    /// True for DEBUG builds and TestFlight installs (sandbox receipt). False on the App Store.
-    static var showsDiagnostics: Bool {
+    /// True only for DEBUG (Xcode) builds. Release builds never show diagnostics:
+    /// App Review installs carry a sandbox receipt just like TestFlight, so a
+    /// receipt check would expose this screen to reviewers.
+    nonisolated static var showsDiagnostics: Bool {
         #if DEBUG
         return true
         #else
-        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+        return false
         #endif
     }
 }
