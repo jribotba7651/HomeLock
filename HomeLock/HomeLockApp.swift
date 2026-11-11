@@ -135,13 +135,27 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
             return
         }
 
+        // "Release Lock": replace the PIN screen with the release status screen
+        // right away (delegate callbacks arrive on the main thread), before the
+        // app's first frame shows the PIN gate as far as possible.
+        var statusName: String?
+        if response.actionIdentifier == "RELEASE_LOCK" {
+            statusName = MainActor.assumeIsolated {
+                let name = LockManager.shared.locks[accessoryID]?.accessoryName
+                    ?? response.notification.request.content.userInfo["accessoryName"] as? String
+                    ?? String(localized: "Device")
+                NotificationReleaseCoordinator.shared.begin(name)
+                return name
+            }
+        }
+
         Task { @MainActor in
             switch response.actionIdentifier {
             case "RELEASE_LOCK":
                 print("📱 [NotificationDelegate] User chose to release lock for accessory \(accessoryID)")
                 // On a cold launch from the notification, HomeKit homes load asynchronously.
                 await HomeKitService.shared.waitServiceReady()
-                await Self.releaseLock(accessoryID)
+                await Self.releaseLock(accessoryID, statusName: statusName)
 
             case "KEEP_LOCKED":
                 print("📱 [NotificationDelegate] User chose to keep lock for accessory \(accessoryID)")
@@ -173,7 +187,9 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     /// build 7); if HomeKit fails to remove the trigger, the user gets a
     /// notification with the error code instead of a silent failure.
     @MainActor
-    static func releaseLock(_ accessoryID: UUID) async {
+    /// - Parameter statusName: set for "Release Lock" — the status screen shown
+    ///   instead of the PIN is updated with the result.
+    static func releaseLock(_ accessoryID: UUID, statusName: String? = nil) async {
         // The action opens the app (.foreground); HomeKit calls made before the
         // app is active can fail, so wait briefly for it to become active.
         for _ in 0..<20 where UIApplication.shared.applicationState != .active {
@@ -181,7 +197,12 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         }
         do {
             try await LockManager.shared.unlockDevice(accessoryID: accessoryID, source: .notification)
+            if let statusName { NotificationReleaseCoordinator.shared.finish(statusName) }
         } catch {
+            if let statusName {
+                NotificationReleaseCoordinator.shared.fail(
+                    statusName, message: ErrorCodeTag.message(error.localizedDescription, for: error))
+            }
             await NotificationManager.shared.showUnlockFailedNotification(
                 message: ErrorCodeTag.message(error.localizedDescription, for: error)
             )

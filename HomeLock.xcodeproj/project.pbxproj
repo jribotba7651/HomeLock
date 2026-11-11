@@ -24,10 +24,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		494039816DF0C356FE83A4FD /* HomeLock.storekit */ = {isa = PBXFileReference; lastKnownFileType = text.plist.storekit; path = HomeLock.storekit; sourceTree = SOURCE_ROOT; };
 		9BBC99D72F0B50B900F2A1CD /* HomeLock.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HomeLock.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9BBC99E82F0B50BA00F2A1CD /* HomeLockTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HomeLockTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9BBC99F22F0B50BA00F2A1CD /* HomeLockUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HomeLockUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		494039816DF0C356FE83A4FD /* HomeLock.storekit */ = {isa = PBXFileReference; lastKnownFileType = text.plist.storekit; path = "HomeLock.storekit"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -314,7 +314,6 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jibaroenlaluna.HomeLock;
-				SWIFT_OBJC_BRIDGING_HEADER = "HomeLock/Support/HomeLock-Bridging-Header.h";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -323,6 +322,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "HomeLock/Support/HomeLock-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -358,7 +358,6 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jibaroenlaluna.HomeLock;
-				SWIFT_OBJC_BRIDGING_HEADER = "HomeLock/Support/HomeLock-Bridging-Header.h";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -367,6 +366,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "HomeLock/Support/HomeLock-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
