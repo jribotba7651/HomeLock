@@ -19,6 +19,9 @@ class NotificationManager: ObservableObject {
 
     @Published var isAuthorized: Bool = false
 
+    /// Title of the expiry notification's second action (identifier KEEP_LOCKED).
+    nonisolated static let dismissActionTitle = String(localized: "Dismiss")
+
     private func setupNotificationCategories() {
         let releaseAction = UNNotificationAction(
             identifier: "RELEASE_LOCK",
@@ -31,7 +34,9 @@ class NotificationManager: ObservableObject {
 
         let keepAction = UNNotificationAction(
             identifier: "KEEP_LOCKED",
-            title: String(localized: "Keep Locked"),
+            // Shown as "Dismiss": the lock has already expired, so this
+            // action can't keep it. It dismisses and never releases.
+            title: Self.dismissActionTitle,
             options: [.destructive]
         )
 

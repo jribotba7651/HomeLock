@@ -90,7 +90,11 @@ struct NotificationActionTests {
         #expect(NotificationDelegate.releasesLock(actionIdentifier: "RELEASE_LOCK"))
     }
 
-    @Test func keepLockedNeverReleases() {
+    @Test func secondActionIsTitledDismiss() {
+        #expect(NotificationManager.dismissActionTitle == "Dismiss")
+    }
+
+    @Test func dismissNeverReleases() {
         #expect(!NotificationDelegate.releasesLock(actionIdentifier: "KEEP_LOCKED"))
     }
 

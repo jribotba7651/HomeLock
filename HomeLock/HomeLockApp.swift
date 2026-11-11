@@ -162,7 +162,7 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
                 await LockManager.shared.cleanupExpiredTriggers()
 
             case "KEEP_LOCKED":
-                // Keep the lock: never release from here, just dismiss.
+                // "Dismiss": never release from here, just dismiss.
                 print("📱 [NotificationDelegate] User chose to keep lock for accessory \(accessoryID)")
                 Self.dismissDelivered(response.notification)
 
@@ -201,7 +201,7 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Pure routing for an expiry notification response: only "Release Lock"
-    /// releases; "Keep Locked" and a tap on the body never do.
+    /// releases; "Dismiss" (KEEP_LOCKED) and a tap on the body never do.
     nonisolated static func releasesLock(actionIdentifier: String) -> Bool {
         actionIdentifier == "RELEASE_LOCK"
     }
