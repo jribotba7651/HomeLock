@@ -26,7 +26,7 @@ enum AppEnvironment {
 
 struct LockDiagnosticsView: View {
     @ObservedObject private var homeKit = HomeKitService.shared
-    @AppStorage(HomeKitService.lockEndModeKey) private var modeRaw = HomeKitService.LockEndMode.appOnly.rawValue
+    @AppStorage(HomeKitService.lockEndModeKey) private var modeRaw = HomeKitService.defaultLockEndMode.rawValue
     @State private var report = ""
     @State private var copied = false
 
