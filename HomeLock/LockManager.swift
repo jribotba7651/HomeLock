@@ -446,6 +446,13 @@ class LockManager: ObservableObject {
 
     // MARK: - Public API
 
+    /// Throws `lutronNotSupported` when the lock policy forbids locking.
+    nonisolated static func checkLockAllowed(isLutron: Bool, ignoreLutron: Bool) throws {
+        guard HomeKitService.allowsLock(isLutron: isLutron, ignoreLutron: ignoreLutron) else {
+            throw LockManagerError.lutronNotSupported
+        }
+    }
+
     /// Locks a device with the given parameters (Shortcuts entry point)
     func lockDevice(accessoryID: UUID, duration: TimeInterval?, lockedState: Bool = false) async throws {
         isUserOperating = true
@@ -461,10 +468,9 @@ class LockManager: ObservableObject {
             throw LockManagerError.accessoryNotFound
         }
 
-        guard !homeKit.isLutronDevice(accessory) else {
-            print("🚫 [LockManager] Lutron device blocked: \(accessory.name)")
-            throw LockManagerError.lutronNotSupported
-        }
+        // Lutron is lockable only while "Ignore Lutron devices" is OFF.
+        try Self.checkLockAllowed(isLutron: homeKit.isLutronDevice(accessory),
+                                  ignoreLutron: HomeKitService.shouldIgnoreLutron)
 
         // Don't stack a second lock (and trigger) on an accessory that is already locked
         guard !isLocked(accessoryID) else {
@@ -475,7 +481,7 @@ class LockManager: ObservableObject {
         // Compute expiresAt BEFORE creating trigger so it gets embedded in the trigger name
         let expiresAt = duration.map { Date().addingTimeInterval($0) }
 
-        // 1. Set power state (Lutron already rejected above)
+        // 1. Set power state (isolated Lutron already rejected above)
         _ = try await homeKit.setAccessoryPowerVerified(accessory, on: lockedState)
 
         // 2. Create trigger with expiration embedded in name

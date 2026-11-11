@@ -57,12 +57,7 @@ struct LockDeviceIntent: AppIntent {
              throw IntentError.invalidDevice
         }
 
-        // Lutron devices are not compatible with HomeLock
-        if let accessory = HomeKitService.shared.accessories.first(where: { $0.uniqueIdentifier == accessoryID }),
-           HomeKitService.shared.isLutronDevice(accessory) {
-            throw IntentError.lockFailed(device.name)
-        }
-
+        // Lutron policy ("Ignore Lutron devices") is enforced in LockManager.lockDevice.
         do {
             try await LockManager.shared.lockDevice(
                 accessoryID: accessoryID,

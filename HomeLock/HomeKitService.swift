@@ -56,6 +56,17 @@ class HomeKitService: NSObject, ObservableObject {
         isLutron && ignoreLutron
     }
 
+    /// Pure lock rule: Lutron can be locked only while isolation is OFF.
+    nonisolated static func allowsLock(isLutron: Bool, ignoreLutron: Bool) -> Bool {
+        !(isLutron && ignoreLutron)
+    }
+
+    /// Pure unlock rule: unlocking is never blocked, so a lock is never stranded
+    /// (removals are allowed for Lutron even while isolation is ON).
+    nonisolated static func allowsUnlock(isLutron: Bool, ignoreLutron: Bool) -> Bool {
+        true
+    }
+
     /// Observable, persisted isolation flag. Settings' toggle and the Home
     /// banner's "Show anyway" both write here; writes persist to UserDefaults
     /// and recompute `outlets` so Home updates immediately.

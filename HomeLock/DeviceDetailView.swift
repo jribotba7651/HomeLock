@@ -108,7 +108,7 @@ struct DeviceDetailView: View {
 
             // MARK: - Lock Section
             Section {
-                if homeKit.isLutronDevice(accessory) {
+                if homeKit.ignoreLutronDevices && homeKit.isLutronDevice(accessory) {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(String(localized: "Not compatible"), systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
