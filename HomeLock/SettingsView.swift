@@ -380,7 +380,7 @@ struct SettingsView: View {
 
     private func loadActiveTriggerCount() async {
         homeKit.requestAuthorization()
-        activeTriggerCount = homeKit.countHomeLockAutomations()
+        activeTriggerCount = homeKit.countHomeLockTriggers()
     }
 
     private func performCleanup() async {

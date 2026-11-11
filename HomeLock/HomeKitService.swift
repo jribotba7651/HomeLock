@@ -953,14 +953,15 @@ class HomeKitService: NSObject, ObservableObject {
         return removedCount
     }
 
-    /// Cuenta el número de automatizaciones HomeLock existentes
-    func countHomeLockAutomations() -> Int {
-        var count = 0
-        for home in homes {
-            count += home.triggers.filter { $0.name.hasPrefix("HomeLock_") }.count
-            count += home.actionSets.filter { $0.name.hasPrefix("HomeLock_") }.count
-        }
-        return count
+    /// Number of HomeLock lock triggers (one per active lock). Action sets are
+    /// not counted: each trigger has one, so counting both showed 2 per lock.
+    func countHomeLockTriggers() -> Int {
+        homes.reduce(0) { $0 + Self.countHomeLockTriggers(named: $1.triggers.map(\.name)) }
+    }
+
+    /// Pure count of HomeLock lock triggers among trigger names.
+    nonisolated static func countHomeLockTriggers(named names: [String]) -> Int {
+        names.filter { $0.hasPrefix("HomeLock_") && !$0.hasPrefix("HomeLock_Revert_") }.count
     }
 
     // MARK: - Trigger Name Parsing
