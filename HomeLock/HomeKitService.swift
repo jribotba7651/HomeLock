@@ -749,14 +749,22 @@ class HomeKitService: NSObject, ObservableObject {
 
     /// Lutron lock path only: fresh read first; if the device is already in the
     /// target state, skip the write (the bridge would reject it). Otherwise
-    /// write and verify like other devices. Returns the state the device reports.
+    /// write and verify like other devices, retrying once after ~1 s if the
+    /// bridge answers readWriteFailure. Returns the state the device reports.
     func setLutronPowerForLock(_ accessory: HMAccessory, on: Bool) async throws -> Bool? {
         let current = await freshPowerState(accessory)
         if Self.shouldSkipPowerWrite(currentState: current, target: on) {
             print("⏭️ [HomeKit] \(accessory.name) already \(on ? "on" : "off"); skipping Lutron power write")
             return current
         }
-        return try await setAccessoryPowerVerified(accessory, on: on)
+        do {
+            return try await setAccessoryPowerVerified(accessory, on: on)
+        } catch let error as HMError where error.code == .readWriteFailure {
+            // The bridge sometimes rejects a write transiently; retry once after ~1 s.
+            print("🔁 [HomeKit] Lutron write failed (readWriteFailure) for \(accessory.name); retrying once in 1s")
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            return try await setAccessoryPowerVerified(accessory, on: on)
+        }
     }
 
     /// Writes the power state, reads it back from the device and retries once.
