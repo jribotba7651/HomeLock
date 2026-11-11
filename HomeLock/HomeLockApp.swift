@@ -142,7 +142,7 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         // right away (delegate callbacks arrive on the main thread), before the
         // app's first frame shows the PIN gate as far as possible.
         var statusName: String?
-        if response.actionIdentifier == "RELEASE_LOCK" {
+        if Self.releasesLock(actionIdentifier: response.actionIdentifier) {
             statusName = MainActor.assumeIsolated {
                 let name = LockManager.shared.locks[accessoryID]?.accessoryName
                     ?? response.notification.request.content.userInfo["accessoryName"] as? String
@@ -162,15 +162,15 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
                 await LockManager.shared.cleanupExpiredTriggers()
 
             case "KEEP_LOCKED":
+                // Keep the lock: never release from here, just dismiss.
                 print("📱 [NotificationDelegate] User chose to keep lock for accessory \(accessoryID)")
-                // Do nothing, lock remains active
+                Self.dismissDelivered(response.notification)
 
             case UNNotificationDefaultActionIdentifier:
-                // User tapped the notification (not a button)
+                // Tapping the body only opens the app (behind the PIN as usual);
+                // it no longer releases. Expired triggers are still removed by
+                // the normal cleanup when the app becomes active.
                 print("📱 [NotificationDelegate] User tapped notification for accessory \(accessoryID)")
-                await HomeKitService.shared.waitServiceReady()
-                await Self.releaseLock(accessoryID)
-                await LockManager.shared.cleanupExpiredTriggers()
 
             default:
                 print("📱 [NotificationDelegate] Unknown action identifier: \(response.actionIdentifier)")
@@ -192,6 +192,18 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
             }
         }
         completionHandler([.banner, .list, .sound, .badge])
+    }
+
+    /// Removes a delivered notification from Notification Center.
+    static func dismissDelivered(_ notification: UNNotification) {
+        UNUserNotificationCenter.current()
+            .removeDeliveredNotifications(withIdentifiers: [notification.request.identifier])
+    }
+
+    /// Pure routing for an expiry notification response: only "Release Lock"
+    /// releases; "Keep Locked" and a tap on the body never do.
+    nonisolated static func releasesLock(actionIdentifier: String) -> Bool {
+        actionIdentifier == "RELEASE_LOCK"
     }
 
     /// Release Lock from a notification. Always frees the device locally (as in
