@@ -220,7 +220,7 @@ class HomeKitService: NSObject, ObservableObject {
     }
 
     /// Recalcula `outlets` aplicando los filtros actuales (incluido el de Lutron).
-    /// Llamar cuando el usuario cambia el toggle de compatibilidad desde Settings.
+    /// Se llama automáticamente al cambiar `ignoreLutronDevices`.
     func refreshOutlets() {
         self.outlets = filterOutlets(from: self.accessories)
     }
@@ -268,7 +268,7 @@ class HomeKitService: NSObject, ObservableObject {
                 service.characteristics.contains { $0.characteristicType == HMCharacteristicTypePowerState }
             }
             guard isControllable else { return false }
-            if isLutronDevice(accessory) {
+            if Self.hidesLutron(isLutron: isLutronDevice(accessory), ignoreLutron: ignoreLutronDevices) {
                 hiddenLutron += 1
                 return false
             }
