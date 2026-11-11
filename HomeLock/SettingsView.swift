@@ -15,7 +15,7 @@ struct SettingsView: View {
     @ObservedObject private var storeManager = StoreManager.shared
 
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0 // 0=System, 1=Light, 2=Dark
-    @AppStorage("notificationsEnabled") private var notificationsEnabled: Bool = true
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var showingCleanupConfirmation = false
     @State private var isCleaningUp = false
@@ -205,10 +205,12 @@ struct SettingsView: View {
 
                 // MARK: - Notifications Section
                 Section {
+                    // The in-app toggle did nothing; show the real iOS setting.
                     HStack {
                         Label("Lock Expiration Notifications", systemImage: "bell")
                         Spacer()
-                        Toggle("", isOn: $notificationsEnabled)
+                        Text(notificationManager.isAuthorized ? String(localized: "On") : String(localized: "Off"))
+                            .foregroundStyle(.secondary)
                     }
 
                     Button {
@@ -220,7 +222,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Notifications")
                 } footer: {
-                    Text("Get notified when device locks expire.")
+                    Text("Get notified when device locks expire, with a Release Lock button. Turn notifications on or off in iOS Settings.")
                 }
 
                 // MARK: - HomeKit Section
@@ -324,6 +326,13 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.large)
             .task {
                 await loadActiveTriggerCount()
+                await notificationManager.checkAuthorizationStatus()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                // Back from iOS Settings: show the current notification setting.
+                if phase == .active {
+                    Task { await notificationManager.checkAuthorizationStatus() }
+                }
             }
             .confirmationDialog(
                 "Remove all HomeLock automations?",

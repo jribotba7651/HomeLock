@@ -67,7 +67,15 @@ class NotificationManager: ObservableObject {
     func checkAuthorizationStatus() async {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
-        isAuthorized = settings.authorizationStatus == .authorized
+        isAuthorized = Self.allowsAlerts(settings.authorizationStatus)
+    }
+
+    /// Statuses that let the app post notifications.
+    nonisolated static func allowsAlerts(_ status: UNAuthorizationStatus) -> Bool {
+        switch status {
+        case .authorized, .provisional, .ephemeral: return true
+        default: return false
+        }
     }
 
     func scheduleLockExpirationNotification(
@@ -75,6 +83,10 @@ class NotificationManager: ObservableObject {
         accessoryName: String,
         expiresAt: Date
     ) async {
+        // Fresh check: on a cold launch or a Shortcuts background launch,
+        // isAuthorized is still false until requestPermission finishes, which
+        // skipped the expiry notification (the Release Lock fallback).
+        await checkAuthorizationStatus()
         guard isAuthorized else {
             print("📱 [NotificationManager] Not authorized to schedule notifications")
             return
@@ -132,6 +144,7 @@ class NotificationManager: ObservableObject {
     /// Pass `userName` to attribute the action to a specific family member; nil falls
     /// back to the generic "another home member" wording.
     func showExternalLockNotification(accessoryName: String, isLocked: Bool, userName: String? = nil) async {
+        await checkAuthorizationStatus()
         guard isAuthorized else {
             print("📱 [NotificationManager] Not authorized to show notifications")
             return
@@ -172,6 +185,7 @@ class NotificationManager: ObservableObject {
 
     /// Shows a tamper alert notification
     func showTamperNotification(accessoryName: String) async {
+        await checkAuthorizationStatus()
         guard isAuthorized else { return }
 
         let identifier = "tamper-alert-\(UUID().uuidString)"
