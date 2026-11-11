@@ -16,7 +16,6 @@ struct SettingsView: View {
 
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0 // 0=System, 1=Light, 2=Dark
     @AppStorage("notificationsEnabled") private var notificationsEnabled: Bool = true
-    @AppStorage(HomeKitService.ignoreLutronDefaultsKey) private var ignoreLutronDevices: Bool = true
 
     @State private var showingCleanupConfirmation = false
     @State private var isCleaningUp = false
@@ -250,12 +249,10 @@ struct SettingsView: View {
                     .disabled(isCleaningUp)
 
                     // Compatibilidad Lutron — ver nota en HomeKitService.shouldIgnoreLutron
-                    Toggle(isOn: $ignoreLutronDevices) {
+                    // Bound to HomeKitService (single source of truth); writes
+                    // persist and recompute outlets.
+                    Toggle(isOn: $homeKit.ignoreLutronDevices) {
                         Label("Ignore Lutron devices", systemImage: "exclamationmark.triangle")
-                    }
-                    .onChange(of: ignoreLutronDevices) { _, _ in
-                        // Recalcular la lista de outlets al cambiar el flag
-                        homeKit.refreshOutlets()
                     }
                 } header: {
                     Text("HomeKit")

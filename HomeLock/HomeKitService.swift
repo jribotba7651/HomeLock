@@ -33,15 +33,38 @@ class HomeKitService: NSObject, ObservableObject {
     // no se pueden bloquear vía Shortcuts, no se sincronizan). El usuario puede
     // reactivarlos desde Settings si Lutron publica un firmware/bridge nuevo
     // que resuelva el problema de conectividad.
-    static let ignoreLutronDefaultsKey = "ignoreLutronDevices"
+    //
+    // Single source of truth: the UserDefaults key below. Views bind to
+    // `ignoreLutronDevices` (never to their own @AppStorage copy) so Settings,
+    // the Home banner and the outlet filter always agree.
+    nonisolated static let ignoreLutronDefaultsKey = "ignoreLutronDevices"
+
+    /// Reads the isolation flag from `defaults`. Missing key = `true` (ignore ON).
+    nonisolated static func isLutronIsolated(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: ignoreLutronDefaultsKey) as? Bool ?? true
+    }
 
     /// `true` (por defecto) = los dispositivos Lutron se excluyen de la app.
     /// Lee directamente UserDefaults para poder usarse fuera de Views.
-    static var shouldIgnoreLutron: Bool {
-        // Default = true. Registramos el valor por defecto para que el primer
-        // lanzamiento también lo respete.
-        UserDefaults.standard.register(defaults: [ignoreLutronDefaultsKey: true])
-        return UserDefaults.standard.bool(forKey: ignoreLutronDefaultsKey)
+    nonisolated static var shouldIgnoreLutron: Bool {
+        isLutronIsolated(in: .standard)
+    }
+
+    /// Pure filter rule: an accessory is hidden from outlets for being Lutron
+    /// only while isolation is on.
+    nonisolated static func hidesLutron(isLutron: Bool, ignoreLutron: Bool) -> Bool {
+        isLutron && ignoreLutron
+    }
+
+    /// Observable, persisted isolation flag. Settings' toggle and the Home
+    /// banner's "Show anyway" both write here; writes persist to UserDefaults
+    /// and recompute `outlets` so Home updates immediately.
+    @Published var ignoreLutronDevices: Bool = HomeKitService.shouldIgnoreLutron {
+        didSet {
+            guard oldValue != ignoreLutronDevices else { return }
+            UserDefaults.standard.set(ignoreLutronDevices, forKey: Self.ignoreLutronDefaultsKey)
+            refreshOutlets()
+        }
     }
 
     /// Detecta si un accesorio es de la marca Lutron
