@@ -362,7 +362,6 @@ struct AccessoryRow: View {
 /// sus dispositivos — simplemente los excluye por inestabilidad del bridge.
 struct LutronHiddenBanner: View {
     let count: Int
-    @AppStorage(HomeKitService.ignoreLutronDefaultsKey) private var ignoreLutronDevices: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -379,8 +378,9 @@ struct LutronHiddenBanner: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             Button {
-                ignoreLutronDevices = false
-                HomeKitService.shared.refreshOutlets()
+                // Same source of truth as the Settings toggle; the setter
+                // persists the value and recomputes outlets immediately.
+                HomeKitService.shared.ignoreLutronDevices = false
             } label: {
                 Text("Show anyway (not recommended)")
                     .font(.caption)
