@@ -265,7 +265,7 @@ class ScheduleManager: ObservableObject {
                 // Serialize through the bridge gatekeeper to avoid saturating the
                 // Caséta Smart Hub's Clear Connect radio.
                 triggerID = try await LutronBridgeGatekeeper.shared.run(for: accessory) {
-                    try await homeKit.setAccessoryPower(accessory, on: false)
+                    _ = try await homeKit.setLutronPowerForLock(accessory, on: false)
                     return try await homeKit.createLockTrigger(for: accessory, lockedState: false, expiresAt: windowEnd)
                 }
             } else {

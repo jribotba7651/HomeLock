@@ -725,6 +725,40 @@ class HomeKitService: NSObject, ObservableObject {
         }
     }
 
+    /// Pure rule for the Lutron lock path: skip the power write when a fresh read
+    /// shows the device already in the target state. The Caséta bridge rejects
+    /// writing the value a device is already in (HMError readWriteFailure).
+    /// An unknown state (read failed) never skips.
+    nonisolated static func shouldSkipPowerWrite(currentState: Bool?, target: Bool) -> Bool {
+        currentState == target
+    }
+
+    /// Fresh read of the power state; nil if the read fails (no cached fallback,
+    /// so a stale cache can never cause a skipped write).
+    func freshPowerState(_ accessory: HMAccessory) async -> Bool? {
+        guard let service = getControllableService(for: accessory),
+              let powerState = getPowerStateCharacteristic(for: service) else { return nil }
+        do {
+            try await powerState.readValue()
+            return powerState.value as? Bool
+        } catch {
+            print("⚠️ [HomeKit] Fresh power read failed for \(accessory.name): \(error)")
+            return nil
+        }
+    }
+
+    /// Lutron lock path only: fresh read first; if the device is already in the
+    /// target state, skip the write (the bridge would reject it). Otherwise
+    /// write and verify like other devices. Returns the state the device reports.
+    func setLutronPowerForLock(_ accessory: HMAccessory, on: Bool) async throws -> Bool? {
+        let current = await freshPowerState(accessory)
+        if Self.shouldSkipPowerWrite(currentState: current, target: on) {
+            print("⏭️ [HomeKit] \(accessory.name) already \(on ? "on" : "off"); skipping Lutron power write")
+            return current
+        }
+        return try await setAccessoryPowerVerified(accessory, on: on)
+    }
+
     /// Writes the power state, reads it back from the device and retries once.
     /// Returns the state the device reports afterwards (nil if unreadable).
     func setAccessoryPowerVerified(_ accessory: HMAccessory, on: Bool) async throws -> Bool? {

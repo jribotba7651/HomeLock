@@ -316,7 +316,7 @@ struct DeviceDetailView: View {
                 // Verified write so a Lutron device that doesn't switch is reported
                 // (same alert as other devices) instead of failing silently.
                 (reportedState, triggerID) = try await LutronBridgeGatekeeper.shared.run(for: accessory) {
-                    let state = try await homeKit.setAccessoryPowerVerified(accessory, on: lockToState)
+                    let state = try await homeKit.setLutronPowerForLock(accessory, on: lockToState)
                     let id = try await homeKit.createLockTrigger(for: accessory, lockedState: lockToState, expiresAt: expiresAt)
                     return (state, id)
                 }

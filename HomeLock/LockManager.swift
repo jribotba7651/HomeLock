@@ -484,8 +484,13 @@ class LockManager: ObservableObject {
         // Compute expiresAt BEFORE creating trigger so it gets embedded in the trigger name
         let expiresAt = duration.map { Date().addingTimeInterval($0) }
 
-        // 1. Set power state (isolated Lutron already rejected above)
-        _ = try await homeKit.setAccessoryPowerVerified(accessory, on: lockedState)
+        // 1. Set power state (isolated Lutron already rejected above). Lutron
+        // skips the write when already in the target state (bridge rejects it).
+        if homeKit.isLutronDevice(accessory) {
+            _ = try await homeKit.setLutronPowerForLock(accessory, on: lockedState)
+        } else {
+            _ = try await homeKit.setAccessoryPowerVerified(accessory, on: lockedState)
+        }
 
         // 2. Create trigger with expiration embedded in name
         let triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: lockedState, expiresAt: expiresAt)
