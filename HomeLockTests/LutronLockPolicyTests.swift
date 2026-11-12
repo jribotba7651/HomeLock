@@ -2,7 +2,8 @@ import Testing
 import Foundation
 @testable import HomeLock
 
-/// Lock/unlock policy for Lutron accessories, driven by "Ignore Lutron devices".
+/// Pure lock/unlock policy for Lutron accessories given an ignore value.
+/// In v1 the effective value is always true (see LutronV1ExclusionTests).
 struct LutronLockPolicyTests {
 
     // Setting OFF: Lutron behaves like any other device.
