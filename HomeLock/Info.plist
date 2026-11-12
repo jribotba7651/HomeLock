@@ -10,8 +10,6 @@
 	<string>HomeLock uses Face ID to give you quick, secure access to the app.</string>
 	<key>NSHomeKitUsageDescription</key>
 	<string>HomeLock needs access to HomeKit to control your smart plugs and enforce time limits.</string>
-	<key>NSSiriUsageDescription</key>
-	<string>HomeLock uses Siri so you can lock and unlock your devices with voice commands.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
