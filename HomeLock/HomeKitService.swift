@@ -212,6 +212,69 @@ class HomeKitService: NSObject, ObservableObject {
         }
     }
 
+    /// True once HMHomeManager has delivered its homes (homeManagerDidUpdateHomes).
+    @Published private(set) var homesLoaded = false
+
+    /// Waits until HMHomeManager has loaded the homes (not just a fixed 5 s),
+    /// capped at `timeout` so an intent can't hang forever.
+    func waitUntilHomesLoaded(timeout: TimeInterval = 20) async {
+        if homeManager == nil { requestAuthorization() }
+        let deadline = Date().addingTimeInterval(timeout)
+        while !homesLoaded && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
+
+    /// Shortcuts cold launch: waits for the homes, then for the accessory to
+    /// be found and reachable (HomeKit needs a moment to reconnect after
+    /// launch; writing before that fails). Returns the accessory, reachable
+    /// or not after `timeout`, or nil if it doesn't exist.
+    func waitForReadyAccessory(_ id: UUID, timeout: TimeInterval = 10) async -> HMAccessory? {
+        await waitUntilHomesLoaded()
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let accessory = accessories.first(where: { $0.uniqueIdentifier == id }), accessory.isReachable {
+                return accessory
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        return accessories.first(where: { $0.uniqueIdentifier == id })
+    }
+
+    /// HMError readWriteFailure (74), as an HMError or a bridged NSError.
+    nonisolated static func isReadWriteFailure(_ error: Error) -> Bool {
+        let ns = error as NSError
+        return ns.domain == HMErrorDomain && ns.code == HMError.Code.readWriteFailure.rawValue
+    }
+
+    /// Runs `operation`; on readWriteFailure waits `delay` and runs it once more.
+    static func retryingOnceOnReadWriteFailure<T>(delay: UInt64 = 1_000_000_000,
+                                                  _ operation: () async throws -> T) async throws -> T {
+        do {
+            return try await operation()
+        } catch where isReadWriteFailure(error) {
+            print("🔁 [HomeKit] readWriteFailure; retrying once")
+            try? await Task.sleep(nanoseconds: delay)
+            return try await operation()
+        }
+    }
+
+    /// Power step of a lock started outside the device screen (Shortcuts):
+    /// fresh read, skip the write if the device is already in the target state
+    /// (writing the current value is rejected by some bridges with
+    /// readWriteFailure), otherwise write and verify. On readWriteFailure it
+    /// re-reads and retries once (the first write may have gone through).
+    func setPowerForLock(_ accessory: HMAccessory, on: Bool) async throws -> Bool? {
+        try await Self.retryingOnceOnReadWriteFailure {
+            let current = await freshPowerState(accessory)
+            if Self.shouldSkipPowerWrite(currentState: current, target: on) {
+                print("⏭️ [HomeKit] \(accessory.name) already \(on ? "on" : "off"); skipping power write")
+                return current
+            }
+            return try await setAccessoryPowerVerified(accessory, on: on)
+        }
+    }
+
     /// Espera a que HomeKit termine de cargar los hogares
     func waitServiceReady() async {
         if homeManager == nil {
@@ -1125,6 +1188,7 @@ extension HomeKitService: HMHomeManagerDelegate {
         Task { @MainActor in
             self.homes = manager.homes
             self.isAuthorized = true
+            self.homesLoaded = true
 
             // Set delegate for each home to receive trigger updates
             for home in manager.homes {

@@ -494,10 +494,9 @@ class LockManager: ObservableObject {
 
         let homeKit = HomeKitService.shared
 
-        // 0. Asegurar que HomeKit está cargado (crítico para Atajos en background)
-        await homeKit.waitServiceReady()
-
-        guard let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) else {
+        // 0. Shortcuts cold launch: wait for the homes and for the accessory to
+        // be reachable before writing (not a fixed timeout).
+        guard let accessory = await homeKit.waitForReadyAccessory(accessoryID) else {
             print("❌ [LockManager] Accessory \(accessoryID) not found")
             throw LockManagerError.accessoryNotFound
         }
@@ -519,16 +518,22 @@ class LockManager: ObservableObject {
         // Compute expiresAt BEFORE creating trigger so it gets embedded in the trigger name
         let expiresAt = duration.map { Date().addingTimeInterval($0) }
 
-        // 1. Set power state (isolated Lutron already rejected above). Lutron
-        // skips the write when already in the target state (bridge rejects it).
-        if homeKit.isLutronDevice(accessory) {
-            _ = try await homeKit.setLutronPowerForLock(accessory, on: lockedState)
-        } else {
-            _ = try await homeKit.setAccessoryPowerVerified(accessory, on: lockedState)
+        // 1. Power (skipped when already in the target state), then 2. the same
+        // trigger as the app (time-of-day end, expiry in the name). Each step
+        // retries once on readWriteFailure. Lutron goes through the bridge
+        // gatekeeper like the app (isolated Lutron already rejected above).
+        let lock = {
+            _ = try await homeKit.setPowerForLock(accessory, on: lockedState)
+            return try await HomeKitService.retryingOnceOnReadWriteFailure {
+                try await homeKit.createLockTrigger(for: accessory, lockedState: lockedState, expiresAt: expiresAt)
+            }
         }
-
-        // 2. Create trigger with expiration embedded in name
-        let triggerID = try await homeKit.createLockTrigger(for: accessory, lockedState: lockedState, expiresAt: expiresAt)
+        let triggerID: UUID
+        if homeKit.isLutronDevice(accessory) {
+            triggerID = try await LutronBridgeGatekeeper.shared.run(for: accessory) { try await lock() }
+        } else {
+            triggerID = try await lock()
+        }
 
         // 3. Add to local state (UserDefaults cache)
         addLock(

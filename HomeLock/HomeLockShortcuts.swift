@@ -45,12 +45,20 @@ struct HomeLockDeviceQuery: EntityQuery {
 enum HomeKitIntentMode {
     static let modes: IntentModes = .foreground(.immediate)
 
-    /// Waits up to ~5 s for the app to become active before using HomeKit.
+    /// Waits for the app to become active before using HomeKit (the PIN
+    /// screen counts as active; a Face ID sheet briefly makes it inactive).
+    /// Capped at 30 s so the intent can't hang.
     @MainActor
-    static func waitUntilActive() async {
-        for _ in 0..<20 where UIApplication.shared.applicationState != .active {
+    static func waitUntilActive(timeout: TimeInterval = 30) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while UIApplication.shared.applicationState != .active && Date() < deadline {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
+    }
+
+    /// Message shown to Shortcuts, with the HomeKit error code appended.
+    static func failureMessage(for error: Error) -> String {
+        ErrorCodeTag.message(error.localizedDescription, for: error)
     }
 }
 
@@ -92,7 +100,7 @@ struct LockDeviceIntent: AppIntent {
         } catch LockManagerError.lockLimitReached {
             return .result(dialog: "\(LockManagerError.lockLimitReached.localizedDescription)")
         } catch {
-            throw IntentError.operationFailed(error.localizedDescription)
+            throw IntentError.operationFailed(HomeKitIntentMode.failureMessage(for: error))
         }
     }
 }
@@ -132,7 +140,7 @@ struct UnlockDeviceIntent: AppIntent {
         do {
             try await LockManager.shared.unlockDevice(accessoryID: accessoryID)
         } catch {
-            throw IntentError.operationFailed(error.localizedDescription)
+            throw IntentError.operationFailed(HomeKitIntentMode.failureMessage(for: error))
         }
         return .result(dialog: "Unlocked \(device.name)")
     }
