@@ -25,6 +25,9 @@
 //  Only used when `HomeKitService.shouldIgnoreLutron == false` — i.e. the user
 //  explicitly opted back in. The default path still blocks Lutron entirely.
 //
+//  v1: unreachable — Lutron locking is out of v1 (FeatureFlags.lutronLockingEnabled,
+//  `HOMELOCK_LUTRON` compilation condition, off). TODO(1.1): re-enable.
+//
 
 import Foundation
 import HomeKit

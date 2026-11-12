@@ -253,8 +253,12 @@ struct SettingsView: View {
                     // Compatibilidad Lutron — ver nota en HomeKitService.shouldIgnoreLutron
                     // Bound to HomeKitService (single source of truth); writes
                     // persist and recompute outlets.
-                    Toggle(isOn: $homeKit.ignoreLutronDevices) {
-                        Label("Ignore Lutron devices", systemImage: "exclamationmark.triangle")
+                    // Hidden in v1 (Lutron locking compiled out).
+                    // TODO(1.1): shown again when HOMELOCK_LUTRON is enabled.
+                    if FeatureFlags.lutronLockingEnabled {
+                        Toggle(isOn: $homeKit.ignoreLutronDevices) {
+                            Label("Ignore Lutron devices", systemImage: "exclamationmark.triangle")
+                        }
                     }
                 } header: {
                     Text("HomeKit")

@@ -44,10 +44,19 @@ class HomeKitService: NSObject, ObservableObject {
         defaults.object(forKey: ignoreLutronDefaultsKey) as? Bool ?? true
     }
 
+    /// Effective isolation: with Lutron locking compiled out
+    /// (`FeatureFlags.lutronLockingEnabled == false`, v1) Lutron is always
+    /// ignored regardless of the stored setting.
+    nonisolated static func effectiveIgnoreLutron(stored: Bool, lutronEnabled: Bool) -> Bool {
+        !lutronEnabled || stored
+    }
+
     /// `true` (por defecto) = los dispositivos Lutron se excluyen de la app.
+    /// Always `true` in v1 (see `FeatureFlags.lutronLockingEnabled`).
     /// Lee directamente UserDefaults para poder usarse fuera de Views.
     nonisolated static var shouldIgnoreLutron: Bool {
-        isLutronIsolated(in: .standard)
+        effectiveIgnoreLutron(stored: isLutronIsolated(in: .standard),
+                              lutronEnabled: FeatureFlags.lutronLockingEnabled)
     }
 
     /// Pure filter rule: an accessory is hidden from outlets for being Lutron
@@ -72,6 +81,12 @@ class HomeKitService: NSObject, ObservableObject {
     /// and recompute `outlets` so Home updates immediately.
     @Published var ignoreLutronDevices: Bool = HomeKitService.shouldIgnoreLutron {
         didSet {
+            // v1: Lutron locking is off, so isolation cannot be turned off.
+            // TODO(1.1): drop this once FeatureFlags.lutronLockingEnabled is on.
+            if !FeatureFlags.lutronLockingEnabled && !ignoreLutronDevices {
+                ignoreLutronDevices = true
+                return
+            }
             guard oldValue != ignoreLutronDevices else { return }
             UserDefaults.standard.set(ignoreLutronDevices, forKey: Self.ignoreLutronDefaultsKey)
             refreshOutlets()
