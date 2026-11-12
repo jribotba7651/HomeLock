@@ -24,6 +24,11 @@ class HomeKitService: NSObject, ObservableObject {
     /// mostrar un banner explicativo en el dashboard (en vez de silencio).
     @Published var hiddenLutronCount: Int = 0
 
+    /// Controllable Lutron accessories excluded from `outlets`. The dashboard
+    /// lists them as "Lutron not supported yet" (not lockable) instead of
+    /// hiding them silently.
+    @Published var unsupportedLutron: [HMAccessory] = []
+
     // MARK: - Lutron compatibility flag
     //
     // Los dispositivos Lutron (Caséta / RA3) a través de su bridge HomeKit son
@@ -320,7 +325,7 @@ class HomeKitService: NSObject, ObservableObject {
     /// de `shouldIgnoreLutron`. Actualiza `hiddenLutronCount` como efecto
     /// secundario para que la UI pueda mostrar un aviso.
     private func filterOutlets(from accessories: [HMAccessory]) -> [HMAccessory] {
-        var hiddenLutron = 0
+        var hiddenLutron: [HMAccessory] = []
 
         // Categories that expose a PowerState characteristic but don't behave
         // like switchable outlets (writing fails or has unintended effects).
@@ -358,12 +363,13 @@ class HomeKitService: NSObject, ObservableObject {
             }
             guard isControllable else { return false }
             if Self.hidesLutron(isLutron: isLutronDevice(accessory), ignoreLutron: ignoreLutronDevices) {
-                hiddenLutron += 1
+                hiddenLutron.append(accessory)
                 return false
             }
             return true
         }
-        self.hiddenLutronCount = hiddenLutron
+        self.hiddenLutronCount = hiddenLutron.count
+        self.unsupportedLutron = hiddenLutron
         return filtered
     }
 

@@ -77,7 +77,7 @@ struct DashboardView: View {
                         systemImage: "homekit",
                         description: Text(String(localized: "Waiting for authorization..."))
                     )
-                } else if homeKit.outlets.isEmpty {
+                } else if homeKit.outlets.isEmpty && homeKit.unsupportedLutron.isEmpty {
                     ContentUnavailableView(
                         String(localized: "No devices"),
                         systemImage: "poweroutlet.type.b",
@@ -87,9 +87,6 @@ struct DashboardView: View {
                     List {
                         if FeatureFlags.familySharingEnabled {
                             SharedLocksView()
-                        }
-                        if homeKit.hiddenLutronCount > 0 {
-                            LutronHiddenBanner(count: homeKit.hiddenLutronCount)
                         }
                         ForEach(groupedAccessories.keys.sorted(), id: \.self) { roomName in
                             Section {
@@ -106,6 +103,17 @@ struct DashboardView: View {
                                 }
                             } header: {
                                 Text(roomName)
+                            }
+                        }
+                        // Lutron is shown but not lockable in v1.
+                        // TODO(1.1): lockable again when HOMELOCK_LUTRON is on.
+                        if !homeKit.unsupportedLutron.isEmpty {
+                            Section {
+                                ForEach(homeKit.unsupportedLutron, id: \.uniqueIdentifier) { accessory in
+                                    UnsupportedAccessoryRow(accessory: accessory)
+                                }
+                            } header: {
+                                Text("Not supported")
                             }
                         }
                     }
@@ -355,42 +363,30 @@ struct AccessoryRow: View {
     }
 }
 
-// MARK: - Lutron Hidden Banner
+// MARK: - Unsupported (Lutron) Row
 
-/// Banner informativo mostrado cuando hay accesorios Lutron ocultos por la
-/// política `ignoreLutronDevices`. Deja claro al usuario que la app conoce
-/// sus dispositivos — simplemente los excluye por inestabilidad del bridge.
-struct LutronHiddenBanner: View {
-    let count: Int
+/// Non-interactive row for a Lutron accessory: visible in the list, but it
+/// can't be opened or locked in v1.
+struct UnsupportedAccessoryRow: View {
+    let accessory: HMAccessory
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Text("\(count) Lutron device\(count == 1 ? "" : "s") hidden")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-            }
-            Text("Lutron's HomeKit bridge loses connection when apps create many automations, which breaks locks silently. HomeLock hides Lutron devices by default to protect the rest of your home.")
-                .font(.caption)
+        HStack(spacing: 12) {
+            Image(systemName: "lock.slash")
+                .font(.title3)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                // Same source of truth as the Settings toggle; the setter
-                // persists the value and recomputes outlets immediately.
-                HomeKitService.shared.ignoreLutronDevices = false
-            } label: {
-                Text("Show anyway (not recommended)")
+                .frame(width: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(accessory.name)
+                    .foregroundStyle(.secondary)
+                Text("Lutron not supported yet")
                     .font(.caption)
-                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless)
-            .padding(.top, 2)
+            Spacer()
         }
-        .padding(.vertical, 6)
-        .listRowBackground(Color.orange.opacity(0.08))
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
     }
 }
 
