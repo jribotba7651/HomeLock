@@ -70,3 +70,5 @@
 // Lutron (v1: not supported)
 "Not supported" = "Not supported";
 "Lutron not supported yet" = "Lutron not supported yet";
+"Lutron devices aren't supported in this version of HomeLock yet." = "Lutron devices aren't supported in this version of HomeLock yet.";
+"Remove all HomeLock triggers and automations from your HomeKit. Lutron devices aren't supported yet." = "Remove all HomeLock triggers and automations from your HomeKit. Lutron devices aren't supported yet.";

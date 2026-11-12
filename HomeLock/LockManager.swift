@@ -83,7 +83,8 @@ enum LockManagerError: LocalizedError {
         case .unlockFailed(let name, let underlying):
             return "HomeKit couldn't remove the lock on \(name) (\(underlying.localizedDescription)). The lock is still active. Make sure the device and its bridge are reachable, then try again."
         case .lutronNotSupported:
-            return "Lutron devices are currently disabled in HomeLock because their HomeKit bridge loses connection too often, making locks unreliable. You can re-enable them from Settings → HomeKit if you're willing to accept this limitation."
+            // TODO(1.1): revisit when Lutron locking is re-enabled.
+            return String(localized: "Lutron devices aren't supported in this version of HomeLock yet.")
         }
     }
 }

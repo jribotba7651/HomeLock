@@ -263,7 +263,11 @@ struct SettingsView: View {
                 } header: {
                     Text("HomeKit")
                 } footer: {
-                    Text("Remove all HomeLock triggers and automations from your HomeKit. Lutron devices are ignored by default because their HomeKit bridge is unreliable — disable this only if you've confirmed your bridge stays connected.")
+                    if FeatureFlags.lutronLockingEnabled {
+                        Text("Remove all HomeLock triggers and automations from your HomeKit. Lutron devices are ignored by default because their HomeKit bridge is unreliable — disable this only if you've confirmed your bridge stays connected.")
+                    } else {
+                        Text("Remove all HomeLock triggers and automations from your HomeKit. Lutron devices aren't supported yet.")
+                    }
                 }
 
                 // MARK: - Lock Diagnostics (DEBUG only)

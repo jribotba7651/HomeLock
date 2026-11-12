@@ -284,7 +284,7 @@ struct DeviceDetailView: View {
         // attempt from a deep-linked or stale view could still reach here.
         if HomeKitService.shouldIgnoreLutron && homeKit.isLutronDevice(accessory) {
             await MainActor.run {
-                errorMessage = String(localized: "Lutron devices are disabled in Settings")
+                errorMessage = String(localized: "Lutron not supported yet")
                 showingError = true
             }
             return
