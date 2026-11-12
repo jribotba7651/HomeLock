@@ -636,7 +636,8 @@ class LockManager: ObservableObject {
         defer { isUserOperating = false }
 
         let homeKit = HomeKitService.shared
-        await homeKit.waitServiceReady()
+        // Wait for the homes to load (Shortcuts / notification cold launch).
+        await homeKit.waitUntilHomesLoaded()
 
         var failure: Error?
         if let accessory = homeKit.accessories.first(where: { $0.uniqueIdentifier == accessoryID }) {
@@ -646,7 +647,9 @@ class LockManager: ObservableObject {
                 print("⚠️ [LockManager] Removing trigger by ID failed for \(config.accessoryName): \(error); trying by accessory")
             }
             do {
-                try await homeKit.removeLockTrigger(for: accessory)
+                try await HomeKitService.retryingOnceOnReadWriteFailure {
+                    try await homeKit.removeLockTrigger(for: accessory)
+                }
             } catch HomeKitError.homeNotFound {
                 // No reachable home holds a trigger for it; nothing left to remove.
             } catch {
