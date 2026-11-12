@@ -196,6 +196,53 @@ class HomeKitService: NSObject, ObservableObject {
         return isLutronDevice(accessory)
     }
 
+    /// Pure rule for the v1 launch purge: a HomeLock automation targeting a
+    /// Lutron accessory is removed while Lutron locking is disabled.
+    nonisolated static func shouldPurgeLutronAutomation(name: String, isLutron: Bool, lutronEnabled: Bool) -> Bool {
+        name.hasPrefix("HomeLock_") && isLutron && !lutronEnabled
+    }
+
+    /// v1 launch cleanup: removes every HomeLock_ trigger and action set that
+    /// targets a Lutron accessory (left over from builds that allowed Lutron
+    /// locks). Non-Lutron automations are untouched. Returns the identifiers of
+    /// the Lutron accessories whose automations were found.
+    /// TODO(1.1): stop calling this once Lutron locking is re-enabled.
+    @discardableResult
+    func removeLutronHomeLockAutomations() async -> Set<UUID> {
+        let lutronEnabled = FeatureFlags.lutronLockingEnabled
+        var affected = Set<UUID>()
+        for home in homes {
+            for trigger in home.triggers {
+                guard let accessory = resolveAccessory(for: trigger),
+                      Self.shouldPurgeLutronAutomation(name: trigger.name,
+                                                       isLutron: isLutronDevice(accessory),
+                                                       lutronEnabled: lutronEnabled) else { continue }
+                affected.insert(accessory.uniqueIdentifier)
+                do {
+                    try await removeHomeLockTrigger(trigger, in: home)
+                    print("🧹 [HomeLock] Removed Lutron trigger (v1): \(trigger.name)")
+                } catch {
+                    print("⚠️ [HomeLock] Could not remove Lutron trigger \(trigger.name): \(error.localizedDescription)")
+                }
+            }
+            // Standalone action sets (re-read: trigger removal deletes attached ones).
+            for actionSet in home.actionSets {
+                guard let action = actionSet.actions.first as? HMCharacteristicWriteAction<NSCopying>,
+                      let accessory = action.characteristic.service?.accessory,
+                      Self.shouldPurgeLutronAutomation(name: actionSet.name,
+                                                       isLutron: isLutronDevice(accessory),
+                                                       lutronEnabled: lutronEnabled) else { continue }
+                affected.insert(accessory.uniqueIdentifier)
+                do {
+                    try await removeHomeLockActionSet(actionSet, in: home)
+                } catch {
+                    print("⚠️ [HomeLock] Could not remove Lutron action set \(actionSet.name): \(error.localizedDescription)")
+                }
+            }
+        }
+        return affected
+    }
+
     /// Next time a Lutron deletion may run; consecutive deletions are spaced ~1s.
     private var nextLutronDeletionAt: Date = .distantPast
     static let lutronDeletionSpacing: TimeInterval = 1.0

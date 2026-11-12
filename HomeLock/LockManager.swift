@@ -221,8 +221,30 @@ class LockManager: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             if await self.syncFromHomeKit() {
+                if !FeatureFlags.lutronLockingEnabled {
+                    await self.purgeLutronLocks()
+                }
                 await self.cleanupOrphanedTriggers()
             }
+        }
+    }
+
+    /// v1: Lutron locking is out (FeatureFlags.lutronLockingEnabled). On launch,
+    /// remove HomeLock triggers/action sets that target Lutron accessories and
+    /// drop any local Lutron locks so old Lutron locks don't linger.
+    /// TODO(1.1): remove when Lutron locking is re-enabled.
+    private func purgeLutronLocks() async {
+        let homeKit = HomeKitService.shared
+        let purged = await homeKit.removeLutronHomeLockAutomations()
+        let localLutron = locks.keys.filter { id in
+            purged.contains(id)
+                || homeKit.accessories.first(where: { $0.uniqueIdentifier == id }).map(homeKit.isLutronDevice) == true
+        }
+        for id in localLutron {
+            await removeLock(for: id, logEvent: false)
+        }
+        if !purged.isEmpty || !localLutron.isEmpty {
+            print("🧹 [LockManager] Lutron purge (v1): \(purged.count) accessories with automations, \(localLutron.count) local locks removed")
         }
     }
 
