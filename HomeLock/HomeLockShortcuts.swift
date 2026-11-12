@@ -1,3 +1,14 @@
+// TODO(1.1): every Shortcuts/Siri action is disabled in v1 (owner decision,
+// build 17) and compiles only with the HOMELOCK_SHORTCUTS Swift compilation
+// condition (not set). Any compiled AppIntent is listed in the Shortcuts app,
+// so #if is required.
+// - Lock Device / Unlock Device: failed on device (app closed: not opened;
+//   app open: HMError 74).
+// - Check Lock Status: reads only local state, but its device parameter is
+//   resolved through HomeKit (HomeLockDeviceQuery -> HomeKitService.outlets),
+//   which isn't available with the app closed.
+#if HOMELOCK_SHORTCUTS
+
 import AppIntents
 import HomeKit
 import Foundation
@@ -38,12 +49,6 @@ struct HomeLockDeviceQuery: EntityQuery {
     }
 }
 
-// TODO(1.1): Shortcuts/Siri Lock Device and Unlock Device are disabled in v1
-// (owner decision, build 17). On device, Lock Device failed: with the app
-// closed it didn't open, with it open it got HMError 74. The code stays here
-// and compiles only with the HOMELOCK_SHORTCUTS Swift compilation condition.
-// Any compiled AppIntent is exposed in the Shortcuts app, so #if is required.
-#if HOMELOCK_SHORTCUTS
 /// HomeKit only serves an iOS app in the foreground: called from an app
 /// launched in the background by Shortcuts/Siri it fails with HMError 80
 /// "Missing entitlement for API" (there is no background HomeKit entitlement
@@ -151,8 +156,6 @@ struct UnlockDeviceIntent: AppIntent {
         return .result(dialog: "Unlocked \(device.name)")
     }
 }
-#endif // HOMELOCK_SHORTCUTS
-
 struct CheckLockStatusIntent: AppIntent {
     static var title: LocalizedStringResource = "Check Lock Status"
     static var description = IntentDescription("Check if a device is currently locked")
@@ -181,7 +184,6 @@ struct CheckLockStatusIntent: AppIntent {
 
 struct HomeLockShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
-        #if HOMELOCK_SHORTCUTS // TODO(1.1): re-enable with the intents above
         AppShortcut(
             intent: LockDeviceIntent(),
             phrases: [
@@ -202,7 +204,6 @@ struct HomeLockShortcuts: AppShortcutsProvider {
             shortTitle: "Unlock Device",
             systemImageName: "lock.open.fill"
         )
-        #endif
 
         AppShortcut(
             intent: CheckLockStatusIntent(),
@@ -235,3 +236,5 @@ enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
         }
     }
 }
+
+#endif // HOMELOCK_SHORTCUTS
