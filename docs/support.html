@@ -42,7 +42,7 @@ footer{text-align:center;padding:48px 24px 0;color:#86868b;font-size:13px;border
 
 <div class="faq-item">
 <h3>Which smart home devices does HomeLock work with?</h3>
-<p>HomeLock works with any HomeKit-compatible <strong>outlet, switch, or light</strong>. This includes brands like Eve, Meross, Wemo, TP-Link Kasa (HomeKit models), Aqara, and many others. Cameras, doorbells, sensors, smart locks, garage doors, blinds, AC units, faucets, and sprinklers are not supported because the on/off lock paradigm doesn't apply to them. Lutron Caséta devices aren't supported in this version.</p>
+<p>HomeLock works with any HomeKit-compatible <strong>outlet, switch, or light</strong>. This includes brands like Eve, Meross, Wemo, TP-Link Kasa (HomeKit models), Aqara, and many others. Cameras, doorbells, sensors, smart locks, garage doors, blinds, AC units, faucets, and sprinklers are not supported because the on/off lock paradigm doesn't apply to them. Lutron Caséta devices aren't supported yet; they appear in the app marked as "not supported" and can't be locked.</p>
 </div>
 
 <div class="faq-item">
@@ -72,12 +72,12 @@ footer{text-align:center;padding:48px 24px 0;color:#86868b;font-size:13px;border
 
 <div class="faq-item">
 <h3>Does HomeLock work without internet?</h3>
-<p>Locking and unlocking devices on your local network works offline as long as your iPhone can reach the smart-home accessories directly. iCloud sync and Siri Shortcuts that route through Apple require an active internet connection.</p>
+<p>Locking and unlocking devices on your local network works offline as long as your iPhone can reach the smart-home accessories directly. iCloud sync requires an active internet connection.</p>
 </div>
 
 <div class="faq-item">
 <h3>Do schedules work when the app is closed?</h3>
-<p>A schedule starts a lock only while HomeLock is running, either in the foreground or in the background. When a timed lock expires, you get a notification, and one tap releases it.</p>
+<p>A schedule starts a lock only while HomeLock is running, either in the foreground or in the background. Once a lock has started, it ends on its own at its end time, even if HomeLock is closed. To end a lock early, use Release Lock.</p>
 </div>
 
 <div class="faq-item">
@@ -87,7 +87,7 @@ footer{text-align:center;padding:48px 24px 0;color:#86868b;font-size:13px;border
 
 <h2>System Requirements</h2>
 <ul>
-<li>iPhone with iOS 26.2 or later</li>
+<li>iPhone with iOS 26.2 or later (HomeLock is available for iPhone only)</li>
 <li>A HomeKit home with at least one compatible outlet, switch, or light</li>
 <li>iCloud account (only for syncing your own history and schedules across your devices)</li>
 </ul>
