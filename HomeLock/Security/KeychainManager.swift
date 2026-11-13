@@ -241,6 +241,20 @@ class KeychainManager {
         return byte == 1
     }
 
+    // MARK: - Fresh-install wipe
+
+    /// Deletes every HomeLock auth item (PIN hash, legacy PIN, lockout
+    /// counters, biometric settings, security token, app lock state). Used by
+    /// `InstallGuard` on a fresh install, since Keychain survives uninstall.
+    func deleteAllAuthItems() {
+        _ = deletePIN()
+        clearLockoutState()
+        _ = delete(key: biometricEnabledKey)
+        _ = deleteBiometricDomainState()
+        _ = deleteSecurityToken()
+        _ = delete(key: appLockStateKey)
+    }
+
     // MARK: - Crypto helpers
 
     /// PBKDF2-HMAC-SHA256.

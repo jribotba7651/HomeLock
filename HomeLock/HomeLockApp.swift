@@ -17,6 +17,10 @@ struct HomeLockApp: App {
     let modelContainer: ModelContainer
 
     init() {
+        // 0. Fresh install vs update: Keychain (PIN) survives uninstall, so a
+        // reinstall must clear it. Runs before AuthenticationManager reads it.
+        InstallGuard.run()
+
         // 1. Definir el esquema
         let schema = Schema([
             LockEvent.self,
